@@ -1,7 +1,6 @@
 "use client"
 
 import React from "react"
-
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -13,35 +12,39 @@ import { Textarea } from "@/components/ui/textarea"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Slider } from "@/components/ui/slider"
-import { ArrowLeft, ArrowRight, Brain, Target, DollarSign, TrendingUp, Shield } from "lucide-react"
+import { ArrowLeft, ArrowRight, Brain, Target, DollarSign, TrendingUp, Shield, Loader2 } from "lucide-react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { apiClient, type AssessmentData as APIAssessmentData, handleAPIError } from "@/lib/api"
+import { useAssessment, useAPICall } from "@/lib/hooks"
 
+// Interface matching the backend API
 interface AssessmentData {
   // Personal Information
   age: number
   income: number
-  netWorth: number
+  net_worth: number
   dependents: number
 
   // Financial Goals
-  primaryGoal: string
-  timeHorizon: number
-  targetAmount: number
-  monthlyContribution: number
+  primary_goal: string
+  time_horizon: number
+  target_amount: number
+  monthly_contribution: number
 
   // Risk Profile
-  riskTolerance: number
-  riskCapacity: string
-  previousExperience: string[]
-  marketReaction: string
+  risk_tolerance: number
+  risk_capacity: string
+  previous_experience: string[]
+  market_reaction: string
 
   // Behavioral Factors
-  investmentStyle: string
-  rebalancingFrequency: string
-  esgPreferences: boolean
+  investment_style: string
+  rebalancing_frequency: string
+  esg_preferences: boolean
 
   // Additional Context
-  specialCircumstances: string
+  special_circumstances?: string
 }
 
 const steps = [
@@ -55,6 +58,24 @@ const steps = [
 export default function AssessmentPage() {
   const [currentStep, setCurrentStep] = useState(1)
   const [assessmentData, setAssessmentData] = useState<Partial<AssessmentData>>({})
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  
+  const router = useRouter()
+  const { saveAssessmentData, saveUserId, isHydrated } = useAssessment()
+  const { execute: submitAssessment } = useAPICall<{ user_id: string; status: string; message: string; assessment_id: string }>()
+
+  // Don't render until hydrated to avoid hydration mismatches
+  if (!isHydrated) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex items-center space-x-2">
+          <Loader2 className="w-6 h-6 animate-spin" />
+          <span>Loading...</span>
+        </div>
+      </div>
+    )
+  }
 
   const updateData = (field: string, value: any) => {
     setAssessmentData((prev) => ({ ...prev, [field]: value }))
@@ -69,6 +90,51 @@ export default function AssessmentPage() {
   const prevStep = () => {
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1)
+    }
+  }
+
+  const handleSubmitAssessment = async () => {
+    setIsSubmitting(true)
+    setSubmitError(null)
+    
+    try {
+      // Validate required fields
+      const requiredFields = [
+        'age', 'income', 'net_worth', 'dependents', 'primary_goal', 
+        'time_horizon', 'target_amount', 'monthly_contribution', 
+        'risk_tolerance', 'risk_capacity', 'previous_experience', 
+        'market_reaction', 'investment_style', 'rebalancing_frequency'
+      ]
+      
+      const missingFields = requiredFields.filter(field => 
+        assessmentData[field as keyof AssessmentData] === undefined || 
+        assessmentData[field as keyof AssessmentData] === null ||
+        (Array.isArray(assessmentData[field as keyof AssessmentData]) && 
+         (assessmentData[field as keyof AssessmentData] as string[]).length === 0)
+      )
+      
+      if (missingFields.length > 0) {
+        setSubmitError(`Please complete all required fields: ${missingFields.join(', ')}`)
+        return
+      }
+      
+      // Submit to API
+      const result = await submitAssessment(() => 
+        apiClient.submitAssessment(assessmentData as APIAssessmentData)
+      )
+      
+      // Save data locally and redirect
+      saveAssessmentData(assessmentData)
+      saveUserId(result.user_id)
+      
+      // Redirect to portfolio generation
+      router.push('/generate')
+      
+    } catch (error) {
+      const errorMessage = handleAPIError(error)
+      setSubmitError(errorMessage)
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -172,14 +238,32 @@ export default function AssessmentPage() {
               <ArrowRight className="w-4 h-4" />
             </Button>
           ) : (
-            <Link href="/generate">
-              <Button className="flex items-center space-x-2 bg-accent hover:bg-accent/90">
-                <Brain className="w-4 h-4" />
-                <span>Generate Portfolio</span>
-              </Button>
-            </Link>
+            <Button 
+              onClick={handleSubmitAssessment}
+              disabled={isSubmitting}
+              className="flex items-center space-x-2 bg-accent hover:bg-accent/90"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Submitting...</span>
+                </>
+              ) : (
+                <>
+                  <Brain className="w-4 h-4" />
+                  <span>Generate Portfolio</span>
+                </>
+              )}
+            </Button>
           )}
         </div>
+        
+        {/* Error Message */}
+        {submitError && (
+          <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
+            <p className="text-destructive text-sm">{submitError}</p>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -230,13 +314,13 @@ function PersonalProfileStep({
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="netWorth">Current Net Worth ($)</Label>
+          <Label htmlFor="net_worth">Current Net Worth ($)</Label>
           <Input
-            id="netWorth"
+            id="net_worth"
             type="number"
             placeholder="150000"
-            value={data.netWorth || ""}
-            onChange={(e) => updateData("netWorth", Number.parseInt(e.target.value))}
+            value={data.net_worth || ""}
+            onChange={(e) => updateData("net_worth", Number.parseInt(e.target.value))}
           />
         </div>
       </div>
@@ -256,7 +340,7 @@ function FinancialGoalsStep({
 
       <div className="space-y-4">
         <Label>Primary Investment Goal</Label>
-        <RadioGroup value={data.primaryGoal} onValueChange={(value) => updateData("primaryGoal", value)}>
+        <RadioGroup value={data.primary_goal} onValueChange={(value) => updateData("primary_goal", value)}>
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="retirement" id="retirement" />
             <Label htmlFor="retirement">Retirement Planning</Label>
@@ -281,8 +365,8 @@ function FinancialGoalsStep({
           <Label>Investment Time Horizon (Years)</Label>
           <div className="px-3">
             <Slider
-              value={[data.timeHorizon || 10]}
-              onValueChange={(value) => updateData("timeHorizon", value[0])}
+              value={[data.time_horizon || 10]}
+              onValueChange={(value) => updateData("time_horizon", value[0])}
               max={40}
               min={1}
               step={1}
@@ -290,7 +374,7 @@ function FinancialGoalsStep({
             />
             <div className="flex justify-between text-sm text-muted-foreground mt-1">
               <span>1 year</span>
-              <span className="font-medium">{data.timeHorizon || 10} years</span>
+              <span className="font-medium">{data.time_horizon || 10} years</span>
               <span>40+ years</span>
             </div>
           </div>
@@ -302,20 +386,20 @@ function FinancialGoalsStep({
             id="monthlyContribution"
             type="number"
             placeholder="1000"
-            value={data.monthlyContribution || ""}
-            onChange={(e) => updateData("monthlyContribution", Number.parseInt(e.target.value))}
+            value={data.monthly_contribution || ""}
+            onChange={(e) => updateData("monthly_contribution", Number.parseInt(e.target.value))}
           />
         </div>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="targetAmount">Target Portfolio Value ($)</Label>
+        <Label htmlFor="target_amount">Target Portfolio Value ($)</Label>
         <Input
-          id="targetAmount"
+          id="target_amount"
           type="number"
           placeholder="1000000"
-          value={data.targetAmount || ""}
-          onChange={(e) => updateData("targetAmount", Number.parseInt(e.target.value))}
+          value={data.target_amount || ""}
+          onChange={(e) => updateData("target_amount", Number.parseInt(e.target.value))}
         />
       </div>
     </div>
@@ -337,8 +421,8 @@ function RiskAssessmentStep({
         <Label>Risk Tolerance Level</Label>
         <div className="px-3">
           <Slider
-            value={[data.riskTolerance || 5]}
-            onValueChange={(value) => updateData("riskTolerance", value[0])}
+            value={[data.risk_tolerance || 5]}
+            onValueChange={(value) => updateData("risk_tolerance", value[0])}
             max={10}
             min={1}
             step={1}
@@ -346,7 +430,7 @@ function RiskAssessmentStep({
           />
           <div className="flex justify-between text-sm text-muted-foreground mt-1">
             <span>Conservative</span>
-            <span className="font-medium">Level {data.riskTolerance || 5}</span>
+            <span className="font-medium">Level {data.risk_tolerance || 5}</span>
             <span>Aggressive</span>
           </div>
         </div>
@@ -354,7 +438,7 @@ function RiskAssessmentStep({
 
       <div className="space-y-4">
         <Label>Financial Risk Capacity</Label>
-        <RadioGroup value={data.riskCapacity} onValueChange={(value) => updateData("riskCapacity", value)}>
+        <RadioGroup value={data.risk_capacity} onValueChange={(value) => updateData("risk_capacity", value)}>
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="low" id="low-capacity" />
             <Label htmlFor="low-capacity">Low - Cannot afford significant losses</Label>
@@ -378,15 +462,15 @@ function RiskAssessmentStep({
               <div key={option} className="flex items-center space-x-2">
                 <Checkbox
                   id={option}
-                  checked={data.previousExperience?.includes(option) || false}
+                  checked={data.previous_experience?.includes(option) || false}
                   onCheckedChange={(checked) => {
-                    const current = data.previousExperience || []
+                    const current = data.previous_experience || []
                     if (checked) {
-                      updateData("previousExperience", [...current, option])
+                      updateData("previous_experience", [...current, option])
                     } else {
                       updateData(
-                        "previousExperience",
-                        current.filter((item) => item !== option),
+                        "previous_experience",
+                        current.filter((item: string) => item !== option),
                       )
                     }
                   }}
@@ -400,7 +484,7 @@ function RiskAssessmentStep({
 
       <div className="space-y-4">
         <Label>Market Downturn Reaction</Label>
-        <RadioGroup value={data.marketReaction} onValueChange={(value) => updateData("marketReaction", value)}>
+        <RadioGroup value={data.market_reaction} onValueChange={(value) => updateData("market_reaction", value)}>
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="sell-immediately" id="sell-immediately" />
             <Label htmlFor="sell-immediately">Sell immediately to avoid further losses</Label>
@@ -433,7 +517,7 @@ function InvestmentPreferencesStep({
 
       <div className="space-y-4">
         <Label>Investment Style Preference</Label>
-        <RadioGroup value={data.investmentStyle} onValueChange={(value) => updateData("investmentStyle", value)}>
+        <RadioGroup value={data.investment_style} onValueChange={(value) => updateData("investment_style", value)}>
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="passive" id="passive" />
             <Label htmlFor="passive">Passive - Low-cost index funds and ETFs</Label>
@@ -452,8 +536,8 @@ function InvestmentPreferencesStep({
       <div className="space-y-4">
         <Label>Portfolio Rebalancing Frequency</Label>
         <RadioGroup
-          value={data.rebalancingFrequency}
-          onValueChange={(value) => updateData("rebalancingFrequency", value)}
+          value={data.rebalancing_frequency}
+          onValueChange={(value) => updateData("rebalancing_frequency", value)}
         >
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="monthly" id="monthly" />
@@ -473,8 +557,8 @@ function InvestmentPreferencesStep({
       <div className="flex items-center space-x-2">
         <Checkbox
           id="esg"
-          checked={data.esgPreferences || false}
-          onCheckedChange={(checked) => updateData("esgPreferences", checked)}
+          checked={data.esg_preferences || false}
+          onCheckedChange={(checked) => updateData("esg_preferences", checked)}
         />
         <Label htmlFor="esg">Include ESG (Environmental, Social, Governance) investments</Label>
       </div>
@@ -484,8 +568,8 @@ function InvestmentPreferencesStep({
         <Textarea
           id="specialCircumstances"
           placeholder="Any additional information that might affect your investment strategy..."
-          value={data.specialCircumstances || ""}
-          onChange={(e) => updateData("specialCircumstances", e.target.value)}
+          value={data.special_circumstances || ""}
+          onChange={(e) => updateData("special_circumstances", e.target.value)}
           rows={4}
         />
       </div>
@@ -516,7 +600,7 @@ function FinalReviewStep({ data }: { data: Partial<AssessmentData> }) {
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Net Worth:</span>
-              <span>${data.netWorth?.toLocaleString()}</span>
+              <span>${data.net_worth?.toLocaleString()}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Dependents:</span>
@@ -532,19 +616,19 @@ function FinalReviewStep({ data }: { data: Partial<AssessmentData> }) {
           <CardContent className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Primary Goal:</span>
-              <span className="capitalize">{data.primaryGoal?.replace("-", " ")}</span>
+              <span className="capitalize">{data.primary_goal?.replace("-", " ")}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Time Horizon:</span>
-              <span>{data.timeHorizon} years</span>
+              <span>{data.time_horizon} years</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Monthly Investment:</span>
-              <span>${data.monthlyContribution?.toLocaleString()}</span>
+              <span>${data.monthly_contribution?.toLocaleString()}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Target Amount:</span>
-              <span>${data.targetAmount?.toLocaleString()}</span>
+              <span>${data.target_amount?.toLocaleString()}</span>
             </div>
           </CardContent>
         </Card>
@@ -556,15 +640,15 @@ function FinalReviewStep({ data }: { data: Partial<AssessmentData> }) {
           <CardContent className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Risk Tolerance:</span>
-              <span>Level {data.riskTolerance}/10</span>
+              <span>Level {data.risk_tolerance}/10</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Risk Capacity:</span>
-              <span className="capitalize">{data.riskCapacity}</span>
+              <span className="capitalize">{data.risk_capacity}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Experience:</span>
-              <span>{data.previousExperience?.length || 0} asset classes</span>
+              <span>{data.previous_experience?.length || 0} asset classes</span>
             </div>
           </CardContent>
         </Card>
@@ -576,15 +660,15 @@ function FinalReviewStep({ data }: { data: Partial<AssessmentData> }) {
           <CardContent className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Investment Style:</span>
-              <span className="capitalize">{data.investmentStyle}</span>
+              <span className="capitalize">{data.investment_style}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Rebalancing:</span>
-              <span className="capitalize">{data.rebalancingFrequency}</span>
+              <span className="capitalize">{data.rebalancing_frequency}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">ESG Focus:</span>
-              <span>{data.esgPreferences ? "Yes" : "No"}</span>
+              <span>{data.esg_preferences ? "Yes" : "No"}</span>
             </div>
           </CardContent>
         </Card>

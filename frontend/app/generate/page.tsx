@@ -5,22 +5,28 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Brain, Zap, Shield, BarChart3, CheckCircle, ArrowRight, Sparkles } from "lucide-react"
+import { Brain, Zap, Shield, BarChart3, CheckCircle, ArrowRight, Sparkles, Loader2, AlertCircle } from "lucide-react"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { apiClient, type PortfolioRecommendation, type AssessmentData, handleAPIError } from "@/lib/api"
 
-interface PortfolioRecommendation {
-  allocation: Array<{
-    name: string
-    percentage: number
-    amount: number
-    color: string
-    rationale: string
-  }>
-  expectedReturn: number
+// Interface matching the API response
+interface PortfolioAllocation {
+  name: string
+  percentage: number
+  amount: number
+  color?: string
+  rationale?: string
+  [key: string]: any // Add index signature for chart compatibility
+}
+
+interface PortfolioRecommendationLocal {
+  allocation: PortfolioAllocation[]
+  expected_return: number
   volatility: number
-  sharpeRatio: number
-  riskScore: number
+  sharpe_ratio: number
+  risk_score: number
   confidence: number
 }
 
@@ -61,72 +67,94 @@ const aiProcessingSteps = [
 export default function GeneratePage() {
   const [currentStep, setCurrentStep] = useState(0)
   const [isGenerating, setIsGenerating] = useState(true)
-  const [portfolio, setPortfolio] = useState<PortfolioRecommendation | null>(null)
+  const [portfolio, setPortfolio] = useState<PortfolioRecommendationLocal | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [assessmentData, setAssessmentData] = useState<AssessmentData | null>(null)
+  
+  const router = useRouter()
 
+  // Load assessment data on component mount
   useEffect(() => {
+    const loadAssessmentData = () => {
+      if (typeof window !== 'undefined') {
+        const storedAssessment = localStorage.getItem('portfolioai_assessment')
+        if (storedAssessment) {
+          try {
+            const parsedData = JSON.parse(storedAssessment)
+            setAssessmentData(parsedData)
+            return parsedData
+          } catch (err) {
+            console.error('Error parsing assessment data:', err)
+            setError('Invalid assessment data. Please complete the assessment again.')
+            return null
+          }
+        } else {
+          setError('No assessment data found. Please complete the assessment first.')
+          return null
+        }
+      }
+      return null
+    }
+
+    const data = loadAssessmentData()
+    if (!data) {
+      // Redirect back to assessment if no data
+      setTimeout(() => router.push('/assessment'), 2000)
+    }
+  }, [router])
+
+  // Handle AI processing steps and API call
+  useEffect(() => {
+    if (!assessmentData || error) return
+
     if (isGenerating && currentStep < aiProcessingSteps.length) {
       const timer = setTimeout(() => {
         setCurrentStep(currentStep + 1)
       }, aiProcessingSteps[currentStep]?.duration || 1000)
 
       return () => clearTimeout(timer)
-    } else if (currentStep >= aiProcessingSteps.length) {
-      // Generate the portfolio recommendation
-      setTimeout(() => {
-        setIsGenerating(false)
-        setPortfolio(generatePortfolioRecommendation())
-      }, 1000)
+    } else if (currentStep >= aiProcessingSteps.length && assessmentData) {
+      // Call the API to generate portfolio
+      generatePortfolioFromAPI(assessmentData)
     }
-  }, [currentStep, isGenerating])
+  }, [currentStep, isGenerating, assessmentData, error])
 
-  const generatePortfolioRecommendation = (): PortfolioRecommendation => {
-    // Mock AI-generated portfolio based on user assessment
-    return {
-      allocation: [
-        {
-          name: "US Large Cap Equities",
-          percentage: 32,
-          amount: 32000,
-          color: "#F59E0B",
-          rationale: "Core holding for growth and stability",
-        },
-        {
-          name: "International Developed",
-          percentage: 18,
-          amount: 18000,
-          color: "#3B82F6",
-          rationale: "Geographic diversification",
-        },
-        {
-          name: "Emerging Markets",
-          percentage: 8,
-          amount: 8000,
-          color: "#10B981",
-          rationale: "Higher growth potential",
-        },
-        { name: "US Bonds", percentage: 25, amount: 25000, color: "#8B5CF6", rationale: "Risk reduction and income" },
-        {
-          name: "REITs",
-          percentage: 10,
-          amount: 10000,
-          color: "#EF4444",
-          rationale: "Inflation hedge and diversification",
-        },
-        { name: "Commodities", percentage: 5, amount: 5000, color: "#F97316", rationale: "Inflation protection" },
-        {
-          name: "Cryptocurrency",
-          percentage: 2,
-          amount: 2000,
-          color: "#06B6D4",
-          rationale: "Alternative asset exposure",
-        },
-      ],
-      expectedReturn: 8.4,
-      volatility: 12.8,
-      sharpeRatio: 1.35,
-      riskScore: 6.2,
-      confidence: 94,
+  const generatePortfolioFromAPI = async (data: AssessmentData) => {
+    try {
+      console.log('Generating portfolio with assessment data:', data)
+      const result = await apiClient.generatePortfolio(data)
+      
+      // Convert API response to local format
+      const portfolioData: PortfolioRecommendationLocal = {
+        allocation: result.allocation.map(item => ({
+          ...item,
+          color: item.color || getRandomColor()
+        })),
+        expected_return: result.expected_return,
+        volatility: result.volatility,
+        sharpe_ratio: result.sharpe_ratio,
+        risk_score: result.risk_score,
+        confidence: result.confidence
+      }
+      
+      setPortfolio(portfolioData)
+      setIsGenerating(false)
+      
+      // Save portfolio data for dashboard
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('portfolioai_portfolio', JSON.stringify(portfolioData))
+      }
+      
+    } catch (err) {
+      console.error('Error generating portfolio:', err)
+      setError(handleAPIError(err))
+      setIsGenerating(false)
     }
+  }
+
+  const getRandomColor = () => {
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#F97316', '#06B6D4']
+    return colors[Math.floor(Math.random() * colors.length)]
   }
 
   const totalAmount = 100000 // Mock initial investment
@@ -154,7 +182,23 @@ export default function GeneratePage() {
       </header>
 
       <div className="container mx-auto px-6 py-8 max-w-6xl">
-        {isGenerating ? (
+        {error ? (
+          <div className="text-center space-y-6">
+            <div className="w-16 h-16 bg-destructive/10 rounded-full flex items-center justify-center mx-auto">
+              <AlertCircle className="w-8 h-8 text-destructive" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-destructive mb-2">Error</h1>
+              <p className="text-muted-foreground max-w-md mx-auto">{error}</p>
+            </div>
+            <Link href="/assessment">
+              <Button className="bg-primary hover:bg-primary/90">
+                <ArrowRight className="w-4 h-4 mr-2" />
+                Complete Assessment
+              </Button>
+            </Link>
+          </div>
+        ) : isGenerating ? (
           <div className="space-y-8">
             {/* AI Processing Header */}
             <div className="text-center space-y-4">
@@ -269,7 +313,7 @@ export default function GeneratePage() {
             <div className="grid md:grid-cols-4 gap-4 max-w-4xl mx-auto">
               <Card className="border-0 shadow-lg">
                 <CardContent className="p-6 text-center">
-                  <div className="text-2xl font-bold text-chart-4">{portfolio?.expectedReturn}%</div>
+                  <div className="text-2xl font-bold text-chart-4">{portfolio?.expected_return}%</div>
                   <div className="text-sm text-muted-foreground">Expected Return</div>
                 </CardContent>
               </Card>
@@ -281,7 +325,7 @@ export default function GeneratePage() {
               </Card>
               <Card className="border-0 shadow-lg">
                 <CardContent className="p-6 text-center">
-                  <div className="text-2xl font-bold text-accent">{portfolio?.sharpeRatio}</div>
+                  <div className="text-2xl font-bold text-accent">{portfolio?.sharpe_ratio}</div>
                   <div className="text-sm text-muted-foreground">Sharpe Ratio</div>
                 </CardContent>
               </Card>
@@ -372,8 +416,8 @@ export default function GeneratePage() {
                   <div>
                     <h4 className="font-semibold mb-2">Risk-Return Optimization</h4>
                     <p className="text-sm text-muted-foreground">
-                      Your portfolio is optimized for a {portfolio?.riskScore}/10 risk level, balancing growth potential
-                      with downside protection. The {portfolio?.sharpeRatio} Sharpe ratio indicates excellent
+                      Your portfolio is optimized for a {portfolio?.risk_score}/10 risk level, balancing growth potential
+                      with downside protection. The {portfolio?.sharpe_ratio} Sharpe ratio indicates excellent
                       risk-adjusted returns.
                     </p>
                   </div>

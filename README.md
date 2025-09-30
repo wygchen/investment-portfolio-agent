@@ -1,30 +1,21 @@
-# AI investment advisor
+## Git commit procedure
+Git and GitHub are two different things. You have to install Git first.
 
-*Automatically synced with your [v0.app](https://v0.app) deployments*
+Use source control tab for easier management but the logic is same as using command line, self-learn how to use source control tab
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/wilsonlau2902s-projects/v0-ai-investment-advisor)
-[![Built with v0](https://img.shields.io/badge/Built%20with-v0.app-black?style=for-the-badge)](https://v0.app/chat/projects/YgHnILooUwA)
+Only commit working code and do not directly commit to main branch
 
-## Overview
+Command line reference for each commit:
+```Bash
+git pull #always pull before commit
+git status #check that you are on the correct branch
+git checkout branch #to change branch
+git status #double check the branch, super large files should not be committed, add the corresponding file type to .gitignore
+git add . #add all remaining files to the commit
+git status #always double check
+git commit -m "message" # write meaningful commit message
+git status #always double check
+git push #this is the action to upload to the "drive"
+```
 
-This repository will stay in sync with your deployed chats on [v0.app](https://v0.app).
-Any changes you make to your deployed app will be automatically pushed to this repository from [v0.app](https://v0.app).
-
-## Deployment
-
-Your project is live at:
-
-**[https://vercel.com/wilsonlau2902s-projects/v0-ai-investment-advisor](https://vercel.com/wilsonlau2902s-projects/v0-ai-investment-advisor)**
-
-## Build your app
-
-Continue building your app on:
-
-**[https://v0.app/chat/projects/YgHnILooUwA](https://v0.app/chat/projects/YgHnILooUwA)**
-
-## How It Works
-
-1. Create and modify your project using [v0.app](https://v0.app)
-2. Deploy your chats from the v0 interface
-3. Changes are automatically pushed to this repository
-4. Vercel deploys the latest version from this repository
+Final reminder: GitHub can be disastrous. If any error occurs find github copilot, it is very good at command line actions. If github copilot want to perform dangerous actions such as revert commit, ask in group first we might face similar things before TT
