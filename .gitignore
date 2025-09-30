@@ -48,3 +48,4 @@ Thumbs.db
 
 # Log files
 *.log
+next-env.d.ts
