@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -18,6 +18,11 @@ import {
   CheckCircle,
   Settings,
   RefreshCw,
+  Target,
+  Home,
+  GraduationCap,
+  Heart,
+  Plane,
 } from "lucide-react"
 import { MarketDataWidget } from "@/components/market-data-widget"
 import {
@@ -37,11 +42,30 @@ import {
 } from "recharts"
 import Link from "next/link"
 
+// Goal options with consistent icons
+const GOAL_OPTIONS = [
+  { id: "retirement", label: "Retirement Planning", icon: Target },
+  { id: "house", label: "Buy a Home", icon: Home },
+  { id: "education", label: "Education Funding", icon: GraduationCap },
+  { id: "wealth", label: "Wealth Growth", icon: TrendingUp },
+  { id: "legacy", label: "Legacy & Estate", icon: Heart },
+  { id: "travel", label: "Travel & Lifestyle", icon: Plane },
+]
+
 export default function DashboardPage() {
   const [selectedTab, setSelectedTab] = useState("overview")
+  const [userProfile, setUserProfile] = useState<any>(null)
   const portfolioValue = 487650
   const changeAmount = 23450
   const changePercentage = 5.06
+
+  // Load user profile from localStorage
+  useEffect(() => {
+    const savedProfile = localStorage.getItem('investmentProfile')
+    if (savedProfile) {
+      setUserProfile(JSON.parse(savedProfile))
+    }
+  }, [])
 
   return (
     <div className="min-h-screen bg-background">
@@ -182,6 +206,41 @@ export default function DashboardPage() {
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
+            {/* User Goals Section */}
+            {userProfile?.goals && userProfile.goals.length > 0 && (
+              <Card className="border-0 shadow-lg">
+                <CardHeader>
+                  <CardTitle className="flex items-center space-x-2">
+                    <Target className="w-5 h-5 text-primary" />
+                    <span>Your Investment Goals</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {userProfile.goals.slice(0, 6).map((goal: any, index: number) => {
+                      const goalOption = GOAL_OPTIONS.find(opt => opt.id === goal.id)
+                      if (!goalOption) return null
+                      const Icon = goalOption.icon
+                      return (
+                        <div
+                          key={goal.id}
+                          className="flex items-center gap-3 p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
+                        >
+                          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                            <Icon className="w-5 h-5 text-primary" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-medium text-sm truncate">{goalOption.label}</h4>
+                            <p className="text-xs text-muted-foreground">Priority #{goal.priority}</p>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+            
             <div className="grid lg:grid-cols-3 gap-6">
               {/* Portfolio Performance Chart */}
               <Card className="lg:col-span-2 border-0 shadow-lg">
