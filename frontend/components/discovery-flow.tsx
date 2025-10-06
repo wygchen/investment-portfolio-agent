@@ -71,21 +71,41 @@ export function DiscoveryFlow() {
     if (currentStep < STEPS.length) {
       setCurrentStep(currentStep + 1)
     } else {
-      // Submit profile to backend (when available) and redirect to dashboard
+      // Submit profile to discovery agent backend
       console.log("Final Profile:", profile)
       
       try {
-        // TODO: Send profile to backend when server is running
-        // await fetch('/api/profile', { method: 'POST', body: JSON.stringify(profile) })
+        // Send profile to discovery agent backend
+        const response = await fetch('http://localhost:8000/api/process-assessment', { 
+          method: 'POST', 
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(profile) 
+        })
         
-        // For now, store in localStorage as backup
-        localStorage.setItem('investmentProfile', JSON.stringify(profile))
+        if (response.ok) {
+          const result = await response.json()
+          console.log('Discovery Agent Response:', result)
+          
+          // Store the profile ID for future reference
+          localStorage.setItem('profileId', result.profile_id)
+          localStorage.setItem('investmentProfile', JSON.stringify(profile))
+          
+          alert(`Profile processed successfully! Profile ID: ${result.profile_id}`)
+        } else {
+          console.error('Failed to process profile:', response.statusText)
+          // Fallback to localStorage
+          localStorage.setItem('investmentProfile', JSON.stringify(profile))
+        }
         
         // Redirect to dashboard
         router.push('/dashboard')
       } catch (error) {
         console.error('Error saving profile:', error)
-        // Still redirect even if backend save fails
+        // Fallback to localStorage even if backend fails
+        localStorage.setItem('investmentProfile', JSON.stringify(profile))
+        alert('Profile saved locally. Backend may not be running.')
         router.push('/dashboard')
       }
     }
