@@ -7,6 +7,11 @@ import uvicorn
 import logging
 from datetime import datetime, timedelta
 import random
+import asyncio
+
+# Import watsonx service and agents
+from services.watsonx_service import get_watsonx_service, initialize_watsonx_service
+from agents.agent_coordinator import get_agent_coordinator, initialize_agent_coordinator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -15,9 +20,13 @@ logger = logging.getLogger(__name__)
 # Create FastAPI app
 app = FastAPI(
     title="PortfolioAI API",
-    description="AI-powered investment portfolio management API",
+    description="AI-powered investment portfolio management API with Watsonx.ai integration",
     version="1.0.0"
 )
+
+# Global service instances
+watsonx_service = None
+agent_coordinator = None
 
 # Configure CORS for frontend integration
 app.add_middleware(
@@ -81,15 +90,98 @@ class RiskMetrics(BaseModel):
 assessments_db: Dict[str, Dict[str, Any]] = {}
 portfolios_db: Dict[str, Dict[str, Any]] = {}
 
+# Startup event to initialize services
+@app.on_event("startup")
+async def startup_event():
+    """Initialize watsonx service and agent coordinator on startup"""
+    global watsonx_service, agent_coordinator
+    try:
+        logger.info("Initializing Watsonx.ai service...")
+        watsonx_service = await initialize_watsonx_service()
+        logger.info("Watsonx.ai service initialized successfully")
+        
+        # Initialize agent coordinator with the LLM
+        if watsonx_service and watsonx_service.llm:
+            logger.info("Initializing Agent Coordinator...")
+            agent_coordinator = await initialize_agent_coordinator(watsonx_service.llm)
+            logger.info("Agent Coordinator initialized successfully")
+        else:
+            logger.warning("Cannot initialize Agent Coordinator - Watsonx LLM not available")
+            
+    except Exception as e:
+        logger.warning(f"Service initialization failed: {e}")
+        logger.info("Application will continue with fallback responses")
+
 # Root endpoint
 @app.get("/")
 async def root():
-    return {"message": "PortfolioAI API", "status": "running", "version": "1.0.0"}
+    service_status = "unknown"
+    if watsonx_service:
+        status_info = watsonx_service.get_service_status()
+        service_status = status_info["status"]
+    
+    return {
+        "message": "PortfolioAI API with Watsonx.ai", 
+        "status": "running", 
+        "version": "1.0.0",
+        "watsonx_status": service_status
+    }
 
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    health_status = {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    
+    # Add watsonx service health if available
+    if watsonx_service:
+        watsonx_status = watsonx_service.get_service_status()
+        health_status["watsonx"] = watsonx_status
+        
+        # Perform actual health check
+        try:
+            is_healthy = await watsonx_service.health_check()
+            health_status["watsonx"]["health_check"] = "passed" if is_healthy else "failed"
+        except Exception as e:
+            health_status["watsonx"]["health_check"] = f"error: {str(e)}"
+    
+    return health_status
+
+# Service status endpoints
+@app.get("/api/watsonx/status")
+async def get_watsonx_status():
+    """Get detailed Watsonx service status"""
+    if not watsonx_service:
+        return {"status": "not_initialized", "message": "Watsonx service not initialized"}
+    
+    return watsonx_service.get_service_status()
+
+@app.get("/api/agents/status")
+async def get_agents_status():
+    """Get agent coordinator and individual agent status"""
+    if not agent_coordinator:
+        return {"status": "not_initialized", "message": "Agent coordinator not initialized"}
+    
+    return agent_coordinator.get_agent_status()
+
+@app.get("/api/agents/health")
+async def get_agents_health():
+    """Perform health check on all agents"""
+    if not agent_coordinator:
+        return {"status": "not_initialized", "message": "Agent coordinator not initialized"}
+    
+    return await agent_coordinator.health_check()
+
+@app.get("/api/agents/session/{session_id}")
+async def get_session_status(session_id: str):
+    """Get status of a specific analysis session"""
+    if not agent_coordinator:
+        raise HTTPException(status_code=404, detail="Agent coordinator not available")
+    
+    session_status = await agent_coordinator.get_session_status(session_id)
+    if not session_status:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return session_status
 
 # Assessment endpoints
 @app.post("/api/assessment", response_model=Dict[str, Any])
@@ -198,6 +290,110 @@ async def get_asset_performance(asset_class: str) -> Dict[str, Any]:
     }
 
 # Risk analytics endpoints
+@app.post("/api/risk-analytics/analyze", response_model=Dict[str, Any])
+async def analyze_risk_profile(assessment: AssessmentData) -> Dict[str, Any]:
+    """Generate AI-powered risk analysis using the agent coordinator"""
+    try:
+        global agent_coordinator
+        if not agent_coordinator:
+            # Fallback to direct watsonx service
+            return await analyze_risk_profile_fallback(assessment)
+        
+        logger.info(f"Processing risk analysis via agent coordinator for user with risk tolerance {assessment.risk_tolerance}")
+        
+        # Convert assessment to dict for processing
+        assessment_data = assessment.model_dump()
+        
+        # Use agent coordinator for comprehensive analysis
+        results = await agent_coordinator.process_portfolio_request(assessment_data)
+        
+        if not results["success"]:
+            logger.error(f"Agent coordinator analysis failed: {results.get('error')}")
+            raise HTTPException(status_code=500, detail="Risk analysis service unavailable")
+        
+        # Extract risk analysis results
+        risk_analysis = results.get("risk_analysis", {})
+        
+        return {
+            "success": True,
+            "analysis": risk_analysis.get("content", ""),
+            "risk_blueprint": risk_analysis.get("risk_blueprint"),
+            "financial_ratios": risk_analysis.get("financial_ratios"),
+            "risk_score": risk_analysis.get("risk_score"),
+            "volatility_target": risk_analysis.get("volatility_target"),
+            "metadata": {
+                "source": "agent_coordinator",
+                "processing_time": results.get("processing_time", 0),
+                "session_id": results.get("session_id"),
+                "agent_metadata": risk_analysis.get("agent_metadata", {}),
+                "workflow_metadata": results.get("workflow_metadata", {}),
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in agent coordinator risk analysis: {str(e)}")
+        # Fallback to direct service
+        return await analyze_risk_profile_fallback(assessment)
+
+async def analyze_risk_profile_fallback(assessment: AssessmentData) -> Dict[str, Any]:
+    """Fallback risk analysis using direct watsonx service"""
+    try:
+        global watsonx_service
+        if not watsonx_service:
+            watsonx_service = get_watsonx_service()
+        
+        logger.info("Using fallback risk analysis method")
+        
+        # Convert assessment to dict for processing
+        assessment_data = assessment.model_dump()
+        
+        # Generate comprehensive risk analysis using AI
+        response = await watsonx_service.generate_risk_analysis(
+            assessment_data, 
+            analysis_type="comprehensive"
+        )
+        
+        if not response.success:
+            logger.error(f"Fallback risk analysis failed: {response.error}")
+            raise HTTPException(status_code=500, detail="Risk analysis service unavailable")
+        
+        # Extract JSON from AI response if present
+        risk_blueprint = None
+        try:
+            content = response.content
+            if "```json" in content:
+                json_start = content.find("```json") + 7
+                json_end = content.find("```", json_start)
+                if json_end > json_start:
+                    import json
+                    json_content = content[json_start:json_end].strip()
+                    risk_blueprint = json.loads(json_content)
+        except Exception as e:
+            logger.warning(f"Failed to parse JSON from AI response: {e}")
+        
+        # Return comprehensive response
+        return {
+            "success": True,
+            "analysis": response.content,
+            "risk_blueprint": risk_blueprint,
+            "metadata": {
+                "source": response.source,
+                "processing_time": response.processing_time,
+                "model_version": response.model_version,
+                "confidence": response.confidence,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in fallback risk analysis: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to analyze risk profile")
+
 @app.get("/api/risk-analytics/portfolio/{user_id}")
 async def get_portfolio_risk_metrics(user_id: str) -> Dict[str, Any]:
     """Get comprehensive risk analytics for user portfolio"""
