@@ -11,7 +11,7 @@ import asyncio
 
 # Import watsonx service and agents
 from services.watsonx_service import get_watsonx_service, initialize_watsonx_service
-from agents.agent_coordinator import get_agent_coordinator, initialize_agent_coordinator
+from risk_analytics_agent.agent_coordinator import get_agent_coordinator, initialize_agent_coordinator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

@@ -12,8 +12,8 @@ from pathlib import Path
 # Add backend to path
 sys.path.append(str(Path(__file__).parent))
 
-from agents.risk_analytics_agent import RiskAnalyticsAgent
-from agents.agent_coordinator import AgentCoordinator, AgentContext
+from risk_analytics_agent.risk_analytics_agent import RiskAnalyticsAgent
+from risk_analytics_agent.agent_coordinator import AgentCoordinator, AgentContext
 from watsonx_utils import create_watsonx_llm
 
 

@@ -12,8 +12,8 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 
 from utils.financial_ratios import FinancialRatioEngine
-from agents.risk_analytics_agent import RiskAnalyticsAgent
-from agents.agent_coordinator import AgentContext
+from risk_analytics_agent.risk_analytics_agent import RiskAnalyticsAgent
+from risk_analytics_agent.agent_coordinator import AgentContext
 from watsonx_utils import create_watsonx_llm
 
 
