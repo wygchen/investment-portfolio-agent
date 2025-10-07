@@ -35,5 +35,15 @@ dependencies:
       - numpy
       - scipy
       
+      # Financial data and analysis packages
+      - yfinance
+      - pytickersymbols
+      - yfinance-cache
+      
+      # Web scraping and HTML parsing for Wikipedia data
+      - requests
+      - lxml
+      - html5lib
+      
       # Optional: for enhanced development
       - python-json-logger
