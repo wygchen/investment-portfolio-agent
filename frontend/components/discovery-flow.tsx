@@ -30,6 +30,8 @@ export type UserProfile = {
     preferIndustries: string[]
     customConstraints: string
   }
+  esgPrioritization: boolean
+  marketSelection: string[]
 }
 
 const STEPS = [
@@ -61,6 +63,8 @@ export function DiscoveryFlow() {
       preferIndustries: [],
       customConstraints: "",
     },
+    esgPrioritization: false,
+    marketSelection: [],
   })
 
   const updateProfile = (updates: Partial<UserProfile>) => {
