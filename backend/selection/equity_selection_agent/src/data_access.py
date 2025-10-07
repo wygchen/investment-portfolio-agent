@@ -17,7 +17,7 @@ from typing import Optional, Tuple, List
 # Add the src directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-from data_provider_enhanced import (
+from backend.selection.equity_selection_agent.src.stock_universe import (
     load_latest_data, 
     should_refresh_data, 
     run_full_data_collection

@@ -1,11 +1,19 @@
 """
-Data Collection Script for Equity Selection Agent
+Enhanced Data Collection Script for Equity Selection Agent
 
-This script demonstrates how to use the enhanced data provider to collect
-all necessary data and save it to CSV files for use by other components.
+This script uses the new EnhancedDataProvider with SQLite storage and incremental updates.
+It supports three main operations:
+- refresh: Complete universe rebuild (when S&P 500 composition changes)
+- update: Incremental price + conditional fundamental updates
+- load: Use existing cached data
 
 Usage:
-    python collect_data.py [--refresh] [--period 1y] [--interval 1d]
+    python collect_data.py [--operation refresh|update|load] [--db-path data/stock_data.db]
+
+Examples:
+    python src/collect_data.py --operation refresh     # Full refresh
+    python src/collect_data.py --operation update      # Incremental update (daily)
+    python src/collect_data.py --operation load        # Just load existing data
 """
 
 import sys
@@ -13,14 +21,15 @@ import os
 import argparse
 import logging
 
-# Add the src directory to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-
-from data_provider_enhanced import (
-    run_full_data_collection, 
-    load_latest_data, 
-    should_refresh_data
-)
+# Try package import first, then fallback to direct import
+try:
+    from .stock_database import StockDatabase
+except ImportError:
+    # For direct script execution, add current directory to path
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+    from stock_database import StockDatabase
 
 # Set up logging
 logging.basicConfig(
@@ -36,79 +45,105 @@ logger = logging.getLogger(__name__)
 
 def main():
     """
-    Main data collection workflow.
+    Main data collection workflow using enhanced provider.
     """
-    parser = argparse.ArgumentParser(description='Collect stock data for equity selection')
-    parser.add_argument('--refresh', action='store_true', help='Force refresh of data')
-    parser.add_argument('--period', default='1y', help='Data period (default: 1y)')
-    parser.add_argument('--interval', default='1d', help='Data interval (default: 1d)')
-    parser.add_argument('--output-dir', default='data', help='Output directory (default: data)')
-    parser.add_argument('--max-age-hours', type=int, default=24, help='Max age in hours before refresh (default: 24)')
+    parser = argparse.ArgumentParser(description='Enhanced stock data collection with SQLite storage')
+    parser.add_argument('--operation', choices=['refresh', 'update', 'load'], default='update',
+                       help='Operation to perform: refresh (full rebuild), update (incremental), load (use cached)')
+    parser.add_argument('--db-path', default='data/stock_data.db', 
+                       help='SQLite database path (default: data/stock_data.db)')
+    parser.add_argument('--include-us', action='store_true', default=False,
+                       help='Include US tickers (default: True)')
+    parser.add_argument('--include-hk', action='store_true', default=False,
+                       help='Include Hong Kong tickers (default: True)')
+    parser.add_argument('--fundamental-days', type=int, default=7,
+                       help='Days threshold for fundamental updates (default: 7)')
     
     args = parser.parse_args()
     
     # Ensure logs directory exists
     os.makedirs('logs', exist_ok=True)
-    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(args.db_path), exist_ok=True)
     
     logger.info("="*60)
-    logger.info("STARTING DATA COLLECTION")
+    logger.info("STARTING ENHANCED DATA COLLECTION")
     logger.info("="*60)
-    logger.info(f"Period: {args.period}, Interval: {args.interval}")
-    logger.info(f"Output directory: {args.output_dir}")
-    logger.info(f"Force refresh: {args.refresh}")
+    logger.info(f"Operation: {args.operation}")
+    logger.info(f"Database: {args.db_path}")
+    logger.info(f"Include US: {args.include_us}, Include HK: {args.include_hk}")
     
     try:
-        # Check if we need to refresh data
-        if not args.refresh:
-            if not should_refresh_data(args.output_dir, args.max_age_hours):
-                logger.info("Data is fresh, loading existing CSV files...")
-                universe_df, price_data_df, fundamental_data_df = load_latest_data(args.output_dir)
-                
-                if universe_df is not None and price_data_df is not None and fundamental_data_df is not None:
-                    logger.info("Successfully loaded existing data:")
-                    logger.info(f"  Universe: {len(universe_df)} tickers")
-                    logger.info(f"  Price data: {price_data_df.shape}")
-                    logger.info(f"  Fundamental data: {len(fundamental_data_df)} records")
-                    logger.info("="*60)
-                    logger.info("DATA COLLECTION COMPLETED (using existing data)")
-                    logger.info("="*60)
-                    return
+        provider = StockDatabase(args.db_path)
         
-        # Collect fresh data
-        logger.info("Collecting fresh data...")
-        universe_df, price_data_df, fundamental_data_df = run_full_data_collection(
-            save_to_csv=True,
-            period=args.period,
-            interval=args.interval,
-            include_us=True,
-            include_hk=False,  # Can be enabled later
-            output_dir=args.output_dir
-        )
+        # Get data summary before operation
+        summary_before = provider.get_data_summary()
+        logger.info("Database state before operation:")
+        logger.info(f"  Universe: {summary_before['universe']['active_tickers']} active tickers")
+        logger.info(f"  Price data: {summary_before['price_data']['total_records']} records")
+        logger.info(f"  Fundamental data: {summary_before['fundamental_data']['total_records']} records")
         
-        # Log results
+        # Perform the requested operation
+        if args.operation == "refresh":
+            logger.info("Performing complete universe refresh...")
+            universe_df = provider.refresh_universe(
+                include_us=args.include_us,
+                include_hk=args.include_hk
+            )
+            # After refresh, update all data
+            update_results = provider.update_data(update_fundamentals=True)
+            logger.info(f"Post-refresh update results: {update_results}")
+            
+        elif args.operation == "update":
+            logger.info("Performing incremental data update...")
+            update_results = provider.update_data()
+            # Auto-decides on fundamentals based on 7-day threshold
+            logger.info(f"Update results: {update_results}")
+            
+        elif args.operation == "load":
+            logger.info("Loading existing data from database...")
+            # No updates, just load existing data
+            
+        # Get final data for reporting
+        universe_df = provider.get_universe()
+        price_data_df = provider.get_price_data()
+        fundamental_data_df = provider.get_fundamental_data()
+        
+        # Get data summary after operation
+        summary_after = provider.get_data_summary()
+        
+        # Log final results
         logger.info("="*60)
-        logger.info("DATA COLLECTION COMPLETED")
+        logger.info("ENHANCED DATA COLLECTION COMPLETED")
         logger.info("="*60)
         
-        if universe_df is not None:
-            logger.info(f"Universe: {len(universe_df)} tickers")
-            logger.info(f"  Sectors: {universe_df['sector'].nunique()} unique sectors")
-            logger.info(f"  Regions: {universe_df['region'].nunique()} regions")
+        if not universe_df.empty:
+            logger.info(f"Universe: {len(universe_df)} active tickers")
+            if 'sector' in universe_df.columns:
+                logger.info(f"  Sectors: {universe_df['sector'].nunique()} unique sectors")
+            if 'region' in universe_df.columns:
+                logger.info(f"  Regions: {universe_df['region'].nunique()} regions")
         
-        if price_data_df is not None:
-            logger.info(f"Price data: {price_data_df.shape}")
-            logger.info(f"  Date range: {price_data_df.index.min()} to {price_data_df.index.max()}")
+        if not price_data_df.empty:
+            logger.info(f"Price data: {len(price_data_df)} total records")
+            logger.info(f"  Tickers with data: {price_data_df['ticker'].nunique()}")
+            if 'date' in price_data_df.columns:
+                logger.info(f"  Date range: {price_data_df['date'].min()} to {price_data_df['date'].max()}")
         
-        if fundamental_data_df is not None:
+        if not fundamental_data_df.empty:
             logger.info(f"Fundamental data: {len(fundamental_data_df)} records")
-            logger.info(f"  Companies with data: {fundamental_data_df['ticker'].nunique()}")
+            logger.info(f"  Companies with market cap: {fundamental_data_df['market_cap'].notna().sum()}")
         
-        logger.info("CSV files saved in '{}' directory".format(args.output_dir))
-        logger.info("Other scripts can now use load_latest_data() to access this data")
+        logger.info(f"SQLite database saved: {args.db_path}")
+        logger.info("Use EnhancedDataProvider to access this data in other scripts")
+        
+        # Show what changed
+        if args.operation in ["refresh", "update"]:
+            price_diff = summary_after['price_data']['total_records'] - summary_before['price_data']['total_records']
+            fund_diff = summary_after['fundamental_data']['total_records'] - summary_before['fundamental_data']['total_records']
+            logger.info(f"Changes: +{price_diff} price records, +{fund_diff} fundamental records")
         
     except Exception as e:
-        logger.error(f"Error during data collection: {e}")
+        logger.error(f"Error during enhanced data collection: {e}")
         raise
 
 

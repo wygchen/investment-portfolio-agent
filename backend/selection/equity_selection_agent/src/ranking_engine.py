@@ -2,19 +2,17 @@
 Agent Output and Reporting Module for Equity Selection Agent (ESA) V1.0
 
 This module synthesizes surviving candidates' features into actionable metrics
-and formats the output for the Parent Portfolio Construction Agent.
+and formats the output for state passing to other agents.
 
 Classes:
 - RankingEngine: Calculates final composite scores and ranks candidates
-- Reporter: Formats output and generates audit trails
+- OutputProcessor: Processes data into structured format for state passing
 """
 
 import pandas as pd
 import numpy as np
 import logging
 from typing import Dict, List, Optional, Any
-import json
-import os
 from datetime import datetime
 from dataclasses import dataclass, asdict
 
@@ -316,16 +314,14 @@ class RankingEngine:
         return ranked_data.head(n).copy()
 
 
-class Reporter:
+class OutputProcessor:
     """
-    Formats final output and generates comprehensive audit trails
-    for transparency and debugging.
+    Processes final selection data into structured format for state passing.
+    Focused on data transformation rather than file generation.
     """
     
     def __init__(self, config: Config):
         self.config = config
-        self.log_dir = config.output.log_directory
-        os.makedirs(self.log_dir, exist_ok=True)
     
     def create_stock_selections(self, data: pd.DataFrame) -> List[StockSelection]:
         """
@@ -446,28 +442,33 @@ class Reporter:
         
         return summary
     
-    def generate_output_dict(self, 
-                           selections: List[StockSelection],
-                           summary: SelectionSummary,
-                           screening_summary: Dict[str, Any],
-                           config_dict: Dict[str, Any]) -> Dict[str, Any]:
+    def process_final_output(self, 
+                           final_data: pd.DataFrame,
+                           initial_universe_size: int,
+                           screening_summary: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Generate complete output dictionary for JSON serialization.
+        Process final selection data into structured output for state passing.
         
         Args:
-            selections: List of selected stocks
-            summary: Selection summary
+            final_data: Final ranked selection data
+            initial_universe_size: Size of initial universe
             screening_summary: Screening process summary
-            config_dict: Configuration used
             
         Returns:
-            Complete output dictionary
+            Structured output dictionary ready for state passing
         """
+        # Create structured objects
+        selections = self.create_stock_selections(final_data)
+        summary = self.create_selection_summary(
+            initial_universe_size, final_data, screening_summary
+        )
+        
+        # Generate structured output for state passing
         output = {
             'meta': {
                 'timestamp': summary.timestamp,
                 'agent_version': '1.0.0',
-                'configuration': config_dict
+                'configuration': self.config.to_dict()
             },
             'summary': asdict(summary),
             'screening_details': screening_summary,
@@ -495,182 +496,3 @@ class Reporter:
             output['top_picks']['top_momentum_pick'] = asdict(top_momentum)
         
         return output
-    
-    def save_json_output(self, output_dict: Dict[str, Any], filename: Optional[str] = None) -> str:
-        """
-        Save output as JSON file.
-        
-        Args:
-            output_dict: Complete output dictionary
-            filename: Optional custom filename
-            
-        Returns:
-            Path to saved file
-        """
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"esa_output_{timestamp}.json"
-        
-        filepath = os.path.join(self.log_dir, filename)
-        
-        with open(filepath, 'w') as f:
-            json.dump(output_dict, f, indent=2, default=str)
-        
-        logger.info(f"Saved JSON output to {filepath}")
-        return filepath
-    
-    def save_csv_output(self, selections: List[StockSelection], filename: Optional[str] = None) -> str:
-        """
-        Save selections as CSV file.
-        
-        Args:
-            selections: List of selected stocks
-            filename: Optional custom filename
-            
-        Returns:
-            Path to saved file
-        """
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"esa_selections_{timestamp}.csv"
-        
-        filepath = os.path.join(self.log_dir, filename)
-        
-        # Convert to DataFrame for CSV export
-        df = pd.DataFrame([asdict(s) for s in selections])
-        df.to_csv(filepath, index=False)
-        
-        logger.info(f"Saved CSV output to {filepath}")
-        return filepath
-    
-    def generate_audit_log(self, 
-                          output_dict: Dict[str, Any],
-                          screening_summary: Dict[str, Any],
-                          execution_time: float) -> str:
-        """
-        Generate detailed audit log file.
-        
-        Args:
-            output_dict: Complete output data
-            screening_summary: Screening process details
-            execution_time: Total execution time in seconds
-            
-        Returns:
-            Path to audit log file
-        """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        log_filename = f"run_{timestamp}.log"
-        log_filepath = os.path.join(self.log_dir, log_filename)
-        
-        with open(log_filepath, 'w') as f:
-            f.write("=" * 80 + "\n")
-            f.write(f"EQUITY SELECTION AGENT (ESA) V1.0 - AUDIT LOG\n")
-            f.write(f"Execution Timestamp: {output_dict['meta']['timestamp']}\n")
-            f.write(f"Total Execution Time: {execution_time:.2f} seconds\n")
-            f.write("=" * 80 + "\n\n")
-            
-            # Configuration summary
-            f.write("CONFIGURATION SUMMARY:\n")
-            f.write("-" * 40 + "\n")
-            config = output_dict['meta']['configuration']
-            f.write(f"Target Stock Count: {config['output']['target_stock_count']}\n")
-            f.write(f"Min ROE Threshold: {config['screening']['min_roe']}\n")
-            f.write(f"Max D/E Threshold: {config['screening']['max_debt_equity_absolute']}\n")
-            f.write(f"Max Beta Threshold: {config['screening']['max_beta']}\n")
-            f.write(f"Factor Weights: V={config['weights']['w_value']}, Q={config['weights']['w_quality']}, R={config['weights']['w_risk']}, M={config['weights']['w_momentum']}, Qual={config['weights']['w_qualitative']}\n")
-            f.write("\n")
-            
-            # Screening process details
-            f.write("SCREENING PROCESS BREAKDOWN:\n")
-            f.write("-" * 40 + "\n")
-            summary = output_dict['summary']
-            f.write(f"Initial Universe Size: {summary['total_universe_size']}\n")
-            f.write(f"Final Selection Count: {summary['final_selection_count']}\n")
-            f.write(f"Total Exclusions: {summary['total_exclusions']}\n")
-            f.write(f"Overall Success Rate: {(summary['final_selection_count']/summary['total_universe_size']*100):.1f}%\n\n")
-            
-            # Layer-by-layer breakdown
-            if 'layers' in screening_summary:
-                for layer in screening_summary['layers']:
-                    f.write(f"{layer['name']}:\n")
-                    f.write(f"  Input: {layer['input_count']} stocks\n")
-                    f.write(f"  Output: {layer['output_count']} stocks\n")
-                    f.write(f"  Excluded: {layer['exclusion_count']} stocks ({layer['exclusion_rate']*100:.1f}%)\n")
-                    
-                    if layer['sample_exclusions']:
-                        f.write("  Sample Exclusions:\n")
-                        for reason in layer['sample_exclusions']:
-                            f.write(f"    - {reason}\n")
-                    f.write("\n")
-            
-            # Final selections
-            f.write("FINAL SELECTIONS (Top 10):\n")
-            f.write("-" * 40 + "\n")
-            f.write(f"{'Rank':<4} {'Ticker':<8} {'Score':<6} {'Sector':<20} {'P/E':<6} {'ROE':<6} {'Beta':<6}\n")
-            f.write("-" * 70 + "\n")
-            
-            for selection in output_dict['selections'][:10]:
-                f.write(f"{selection['overall_rank']:<4} ")
-                f.write(f"{selection['ticker']:<8} ")
-                f.write(f"{selection['final_score']:<6.2f} ")
-                f.write(f"{selection['sector'][:18]:<20} ")
-                f.write(f"{selection['pe_ratio'] or 'N/A':<6} ")
-                f.write(f"{(selection['roe']*100) if selection['roe'] else 'N/A':<6} ")
-                f.write(f"{selection['beta'] or 'N/A':<6}\n")
-            
-            # Sector distribution
-            f.write("\nSECTOR DISTRIBUTION:\n")
-            f.write("-" * 40 + "\n")
-            for sector, count in summary['sector_distribution'].items():
-                percentage = (count / summary['final_selection_count']) * 100
-                f.write(f"{sector}: {count} stocks ({percentage:.1f}%)\n")
-            
-            f.write("\n" + "=" * 80 + "\n")
-            f.write("End of Audit Log\n")
-        
-        logger.info(f"Generated audit log: {log_filepath}")
-        return log_filepath
-    
-    def generate_complete_report(self, 
-                               final_data: pd.DataFrame,
-                               initial_universe_size: int,
-                               screening_summary: Dict[str, Any],
-                               execution_time: float) -> Dict[str, str]:
-        """
-        Generate complete report package with all output formats.
-        
-        Args:
-            final_data: Final ranked selection data
-            initial_universe_size: Size of initial universe
-            screening_summary: Screening process summary
-            execution_time: Total execution time
-            
-        Returns:
-            Dictionary with paths to generated files
-        """
-        # Create structured objects
-        selections = self.create_stock_selections(final_data)
-        summary = self.create_selection_summary(
-            initial_universe_size, final_data, screening_summary
-        )
-        
-        # Generate complete output dictionary
-        output_dict = self.generate_output_dict(
-            selections, summary, screening_summary, self.config.to_dict()
-        )
-        
-        # Save in multiple formats
-        file_paths = {}
-        
-        # JSON output
-        file_paths['json'] = self.save_json_output(output_dict)
-        
-        # CSV output
-        file_paths['csv'] = self.save_csv_output(selections)
-        
-        # Audit log
-        file_paths['audit_log'] = self.generate_audit_log(
-            output_dict, screening_summary, execution_time
-        )
-        
-        return file_paths
