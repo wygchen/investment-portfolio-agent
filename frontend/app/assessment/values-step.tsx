@@ -5,7 +5,8 @@ import { Card } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Leaf, Factory, Heart, Zap, Building2, Pill, ShoppingBag, Cpu } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Leaf, Factory, Heart, Zap, Building2, Pill, ShoppingBag, Cpu, Globe, TrendingUp } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 type ValuesStepProps = {
@@ -45,6 +46,15 @@ export function ValuesStep({ profile, updateProfile }: ValuesStepProps) {
 
     updateProfile({
       values: { ...profile.values, preferIndustries: updated },
+    })
+  }
+
+  const toggleMarketSelection = (market: string) => {
+    const current = profile.marketSelection || []
+    const updated = current.includes(market) ? current.filter((m) => m !== market) : [...current, market]
+
+    updateProfile({
+      marketSelection: updated,
     })
   }
 
@@ -119,6 +129,66 @@ export function ValuesStep({ profile, updateProfile }: ValuesStepProps) {
         </div>
       </div>
 
+      {/* ESG Prioritization */}
+      <div className="space-y-4">
+        <Label className="text-base font-semibold">ESG Investment Preference</Label>
+        <div className="flex items-center space-x-2">
+          <Checkbox
+            id="esg-prioritization"
+            checked={profile.esgPrioritization}
+            onCheckedChange={(checked) =>
+              updateProfile({ esgPrioritization: !!checked })
+            }
+          />
+          <div className="space-y-1">
+            <Label htmlFor="esg-prioritization" className="text-sm font-medium cursor-pointer">
+              Prioritize ESG-focused stocks from ESG indices
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Focus on companies with strong environmental, social, and governance practices
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Market Selection */}
+      <div className="space-y-4">
+        <Label className="text-base font-semibold">Stock Market Preference</Label>
+        <p className="text-sm text-muted-foreground">Select which stock markets you'd like to include</p>
+        <div className="grid grid-cols-2 gap-3">
+          <Card
+            className={cn(
+              "p-4 cursor-pointer transition-all",
+              profile.marketSelection.includes("US") ? "border-primary bg-primary/5 shadow-sm" : "hover:border-primary/50",
+            )}
+            onClick={() => toggleMarketSelection("US")}
+          >
+            <div className="flex flex-col items-center text-center gap-2">
+              <Globe className={cn("w-6 h-6", profile.marketSelection.includes("US") ? "text-primary" : "text-muted-foreground")} />
+              <span className={cn("text-sm font-medium", profile.marketSelection.includes("US") ? "text-primary" : "text-muted-foreground")}>
+                US Stock Market
+              </span>
+              <p className="text-xs text-muted-foreground">NYSE, NASDAQ</p>
+            </div>
+          </Card>
+          <Card
+            className={cn(
+              "p-4 cursor-pointer transition-all",
+              profile.marketSelection.includes("HK") ? "border-primary bg-primary/5 shadow-sm" : "hover:border-primary/50",
+            )}
+            onClick={() => toggleMarketSelection("HK")}
+          >
+            <div className="flex flex-col items-center text-center gap-2">
+              <TrendingUp className={cn("w-6 h-6", profile.marketSelection.includes("HK") ? "text-primary" : "text-muted-foreground")} />
+              <span className={cn("text-sm font-medium", profile.marketSelection.includes("HK") ? "text-primary" : "text-muted-foreground")}>
+                Hong Kong Stock Market
+              </span>
+              <p className="text-xs text-muted-foreground">HKEX</p>
+            </div>
+          </Card>
+        </div>
+      </div>
+
       {/* Custom Constraints */}
       <div className="space-y-3">
         <Label htmlFor="custom-constraints" className="text-base font-semibold">
@@ -141,7 +211,7 @@ export function ValuesStep({ profile, updateProfile }: ValuesStepProps) {
       </div>
 
       {/* Summary */}
-      {(profile.values.avoidIndustries.length > 0 || profile.values.preferIndustries.length > 0) && (
+      {(profile.values.avoidIndustries.length > 0 || profile.values.preferIndustries.length > 0 || profile.esgPrioritization || profile.marketSelection.length > 0) && (
         <Card className="p-6 bg-muted/50">
           <h3 className="font-semibold text-foreground mb-4">Your Values Summary</h3>
           <div className="space-y-4">
@@ -172,6 +242,28 @@ export function ValuesStep({ profile, updateProfile }: ValuesStepProps) {
                       </Badge>
                     )
                   })}
+                </div>
+              </div>
+            )}
+            {profile.esgPrioritization && (
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">ESG Focus:</p>
+                <Badge className="gap-1 bg-green-500 text-white">
+                  <Leaf className="w-3 h-3" />
+                  ESG-focused stocks prioritized
+                </Badge>
+              </div>
+            )}
+            {profile.marketSelection.length > 0 && (
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">Markets:</p>
+                <div className="flex flex-wrap gap-2">
+                  {profile.marketSelection.map((market) => (
+                    <Badge key={market} className="gap-1 bg-blue-500 text-white">
+                      <Globe className="w-3 h-3" />
+                      {market} Market
+                    </Badge>
+                  ))}
                 </div>
               </div>
             )}
