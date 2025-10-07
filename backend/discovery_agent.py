@@ -29,6 +29,10 @@ class UserProfileJSON(BaseModel):
     # Personal information
     personal_values: Dict[str, Any] = Field(description="ESG preferences and values")
     
+    # Investment preferences
+    esg_prioritization: bool = Field(description="Whether to prioritize ESG stocks from ESG indices")
+    market_selection: List[str] = Field(description="Selected stock markets (HK, US, or both)")
+    
     # Metadata
     timestamp: str = Field(description="When profile was created")
     profile_id: str = Field(description="Unique profile identifier")
@@ -78,6 +82,8 @@ class DiscoveryAgent:
             liabilities=float(frontend_data.get('totalDebt', 0)),
             liquidity_needs=self._map_liquidity_needs(frontend_data.get('emergencyFundMonths', '')),
             personal_values=self._extract_values(frontend_data.get('values', {})),
+            esg_prioritization=frontend_data.get('esgPrioritization', False),
+            market_selection=frontend_data.get('marketSelection', []),
             timestamp=datetime.now().isoformat(),
             profile_id=profile_id
         )
@@ -201,7 +207,9 @@ if __name__ == "__main__":
             "avoidIndustries": ["tobacco", "weapons"],
             "preferIndustries": ["technology", "renewable_energy"],
             "customConstraints": "Focus on sustainable investments"
-        }
+        },
+        "esgPrioritization": True,
+        "marketSelection": ["US", "HK"]
     }
     
     # Test the discovery agent
