@@ -17,8 +17,8 @@ import matplotlib.pyplot as plt
 # Import market sentiment score function
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from market_Sentiment import analyze_market_sentiment
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'sentiment_market'))
+from market_sentiment import analyze_market_sentiment
 
 # Section 1: Define Tickers and Time Range 
 tickers = ['SPY', 'BND', 'GLD', 'QQQ', 'VTI']       
