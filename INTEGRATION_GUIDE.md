@@ -63,8 +63,78 @@ The Discovery Agent outputs user profile data in this standardized format:
     },
     "investment_themes": ["technology", "renewable_energy"]
   },
+  "esg_prioritization": true,
+  "market_selection": ["US", "HK"],
   "timestamp": "2025-10-06T12:00:00.000000",
   "profile_id": "profile_20251006_120000"
+}
+```
+
+## JSON Structure Notes
+
+**Important**: The Discovery Agent returns data in two different formats depending on how you access it:
+
+### 1. Direct Profile JSON (from files or data_sharing module)
+This is the clean profile structure shown above - what you get from `latest_profile.json` or `get_user_profile_data()`.
+
+### 2. API Response Wrapper (from REST endpoints)
+When using REST API endpoints, the profile is wrapped in a response object:
+```json
+{
+  "profile_data": { /* profile structure above */ },
+  "file_path": "./shared_data/profile_20251007_235800.json",
+  "status": "success",
+  "message": "User profile generated successfully: profile_20251007_235800"
+}
+```
+
+**Access pattern**: Use `response.json()['profile_data']` to extract the actual profile.
+
+### New Fields Added
+
+#### ESG Prioritization
+- **Field**: `esg_prioritization` (boolean)
+- **Description**: Indicates whether the user wants to prioritize ESG-focused stocks from ESG indices
+- **Default**: `false`
+- **Usage**: When `true`, portfolio construction should favor companies with strong environmental, social, and governance practices
+
+#### Market Selection
+- **Field**: `market_selection` (array of strings)
+- **Description**: User's preferred stock markets for investment
+- **Options**: `["US", "HK"]` or any combination thereof
+- **Default**: `[]` (empty array)
+- **Usage**: Limit stock selection to the specified markets. If empty, default behavior applies
+  - `"US"`: Include US stock markets (NYSE, NASDAQ)
+  - `"HK"`: Include Hong Kong stock market (HKEX)
+
+## Complete Field Reference
+
+Here are all available fields in the user profile JSON:
+
+| Field | Type | Description | Example Values |
+|-------|------|-------------|----------------|
+| `goals` | array | Investment goals with priorities | `[{"goal_type": "retirement", "description": "Retirement Planning", "priority": 1, "target_date": null}]` |
+| `time_horizon` | integer | Investment time horizon in years | `15` |
+| `risk_tolerance` | string | Risk tolerance level | `"low"`, `"medium"`, `"high"` |
+| `income` | float | Annual income | `75000.0` |
+| `savings_rate` | float | Monthly savings amount | `2000.0` |
+| `liabilities` | float | Total debt/liabilities | `25000.0` |
+| `liquidity_needs` | string | Emergency fund requirements | `"low"`, `"medium"`, `"high"` |
+| `personal_values` | object | ESG preferences and values | See nested structure below |
+| `esg_prioritization` | boolean | Prioritize ESG stocks | `true`, `false` |
+| `market_selection` | array | Selected stock markets | `["US"]`, `["HK"]`, `["US", "HK"]`, `[]` |
+| `timestamp` | string | Profile creation timestamp | `"2025-10-07T23:58:00.631475"` |
+| `profile_id` | string | Unique profile identifier | `"profile_20251007_235800"` |
+
+### Personal Values Structure
+```json
+"personal_values": {
+  "esg_preferences": {
+    "avoid_industries": ["tobacco", "weapons"],
+    "prefer_industries": ["technology", "renewable_energy"], 
+    "custom_constraints": "Focus on sustainable investments"
+  },
+  "investment_themes": ["technology", "renewable_energy"]
 }
 ```
 
@@ -89,6 +159,9 @@ profile_data = get_latest_user_profile()
 if profile_data:
     user_risk_tolerance = profile_data['risk_tolerance']
     user_goals = profile_data['goals']
+    user_esg_prioritization = profile_data['esg_prioritization']
+    user_market_selection = profile_data['market_selection']
+    user_personal_values = profile_data['personal_values']
     # Process data for your agent...
 ```
 
@@ -98,18 +171,44 @@ if profile_data:
 # Import the data sharing module
 from data_sharing import get_user_profile_data, save_my_agent_results
 
+def safe_get_nested_value(data, keys, default=None):
+    """Safely access nested dictionary values"""
+    try:
+        for key in keys:
+            data = data[key]
+        return data
+    except (KeyError, TypeError):
+        return default
+
 # Get user profile data
 profile = get_user_profile_data()
 
-# Your agent processing...
-my_analysis_results = {
-    "risk_score": 7.2,
-    "recommendations": ["Increase equity allocation", "Consider growth funds"],
-    "analysis_timestamp": "2025-10-06T12:30:00"
-}
-
-# Save your results for other agents
-save_my_agent_results("risk_analysis", my_analysis_results)
+if profile:
+    # Safe access to all fields
+    goals = profile.get('goals', [])
+    risk_tolerance = profile.get('risk_tolerance', 'medium')
+    esg_prioritization = profile.get('esg_prioritization', False)
+    market_selection = profile.get('market_selection', [])
+    
+    # Safe access to nested personal values
+    avoid_industries = safe_get_nested_value(
+        profile, ['personal_values', 'esg_preferences', 'avoid_industries'], []
+    )
+    prefer_industries = safe_get_nested_value(
+        profile, ['personal_values', 'esg_preferences', 'prefer_industries'], []
+    )
+    
+    # Your agent processing...
+    my_analysis_results = {
+        "risk_score": 7.2,
+        "recommendations": ["Increase equity allocation", "Consider growth funds"],
+        "esg_applied": esg_prioritization,
+        "markets_analyzed": market_selection,
+        "analysis_timestamp": "2025-10-06T12:30:00"
+    }
+    
+    # Save your results for other agents
+    save_my_agent_results("risk_analysis", my_analysis_results)
 ```
 
 ### Method 3: API Endpoints
@@ -122,7 +221,9 @@ import requests
 # Get latest profile via API
 response = requests.get('http://localhost:8000/api/profile/latest')
 if response.status_code == 200:
-    profile_data = response.json()['profile']
+    # API returns nested structure with profile_data
+    api_response = response.json()
+    profile_data = api_response['profile_data']  # Extract the actual profile
 
 # List all available profiles
 response = requests.get('http://localhost:8000/api/profiles/list')
@@ -186,6 +287,16 @@ def run_risk_analysis():
     liabilities = profile['liabilities']
     time_horizon = profile['time_horizon']
     
+    # Extract new ESG and market preferences
+    esg_prioritization = profile['esg_prioritization']  # boolean
+    market_selection = profile['market_selection']  # ['US', 'HK'] or subset
+    
+    # Extract personal values (ESG preferences)
+    personal_values = profile['personal_values']
+    avoid_industries = personal_values['esg_preferences']['avoid_industries']
+    prefer_industries = personal_values['esg_preferences']['prefer_industries']
+    custom_constraints = personal_values['esg_preferences']['custom_constraints']
+    
     # Your risk analysis logic here...
     risk_analysis_results = {
         "risk_capacity": calculate_risk_capacity(income, liabilities),
@@ -210,7 +321,22 @@ from data_sharing import get_user_profile_data, get_other_agent_results
 profile = get_user_profile_data()
 risk_data = get_other_agent_results("risk_analysis")
 
-# Use both datasets for portfolio construction
+# Use ESG and market preferences in portfolio construction
+def construct_portfolio(profile, risk_data):
+    esg_prioritization = profile['esg_prioritization']
+    market_selection = profile['market_selection']
+    
+    # Filter stocks based on market selection
+    available_markets = ['US', 'HK'] if not market_selection else market_selection
+    
+    # Apply ESG filtering if prioritization is enabled
+    if esg_prioritization:
+        # Prioritize stocks from ESG indices
+        stocks = filter_esg_stocks(stocks, prioritize=True)
+    
+    # Construct portfolio with preferences
+    portfolio = build_portfolio(available_markets, esg_prioritization)
+    return portfolio
 ```
 
 ### Selection Agent (Grace)
