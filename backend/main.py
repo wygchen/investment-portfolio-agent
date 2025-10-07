@@ -55,6 +55,9 @@ class AssessmentData(BaseModel):
     rebalancing_frequency: str
     esg_preferences: bool
     special_circumstances: Optional[str] = None
+    # New fields for equity selection
+    sector_preferences: Optional[List[str]] = Field(default=[], description="Preferred investment sectors")
+    region_preferences: Optional[List[str]] = Field(default=[], description="Preferred investment regions")
 
 class PortfolioAllocation(BaseModel):
     name: str

@@ -451,11 +451,15 @@ TONE: Professional, analytical, confident, and educational. Explain complex conc
                 "long_term": "60%"
             }
     
-    def _assess_liquidity_constraints(self, assessment: Dict[str, Any], ratios: Dict[str, float]) -> str:
-        """Assess liquidity needs and constraints."""
+    def _assess_liquidity_constraints(self, assessment: Dict[str, Any], ratios: Dict[str, float]) -> Dict[str, Any]:
+        """Assess liquidity needs and constraints with sector and region preferences."""
         dependents = assessment.get('dependents', 0)
         age = assessment.get('age', 35)
         liquidity_ratio = ratios['liquidity_ratio']
+        
+        # Extract sector and region preferences from assessment
+        sector_preferences = assessment.get('sector_preferences', [])
+        region_preferences = assessment.get('region_preferences', [])
         
         constraints = []
         
@@ -471,7 +475,15 @@ TONE: Professional, analytical, confident, and educational. Explain complex conc
         if not constraints:
             constraints.append("Standard liquidity needs - maintain 3-6 months emergency fund")
         
-        return "; ".join(constraints)
+        # Return structured data including sector and region for equity selection
+        return {
+            "constraints_text": "; ".join(constraints),
+            "sector_preferences": sector_preferences,
+            "region_preferences": region_preferences,
+            "liquidity_score": liquidity_ratio,
+            "age_factor": age,
+            "dependent_factor": dependents
+        }
     
     async def _generate_ai_analysis(self, assessment: Dict[str, Any], ratios: Dict[str, float],
                                   risk_capacity: Dict[str, Any], risk_tolerance: Dict[str, Any],
@@ -592,10 +604,10 @@ RISK FACTORS TO MONITOR:
 """
     
     def _create_risk_blueprint(self, risk_capacity: Dict[str, Any], risk_tolerance: Dict[str, Any],
-                             risk_requirement: Dict[str, Any], liquidity_constraints: str,
+                             risk_requirement: Dict[str, Any], liquidity_constraints: Dict[str, Any],
                              time_horizon_bands: Dict[str, str], risk_score: int,
                              volatility_target: float, financial_ratios: Dict[str, float]) -> Dict[str, Any]:
-        """Create structured risk blueprint JSON."""
+        """Create structured risk blueprint JSON with sector and region data for equity selection."""
         
         # Determine overall risk level
         risk_levels = [risk_capacity['level'], risk_tolerance['level'], risk_requirement['level']]
@@ -608,7 +620,7 @@ RISK FACTORS TO MONITOR:
             "risk_capacity": f"{risk_capacity['level']} - {risk_capacity['description']}",
             "risk_tolerance": f"{risk_tolerance['level']} - {risk_tolerance['description']}",
             "risk_requirement": f"{risk_requirement['level']} - {risk_requirement['description']}",
-            "liquidity_constraints": liquidity_constraints,
+            "liquidity_constraints": liquidity_constraints.get("constraints_text", "Standard liquidity needs"),
             "time_horizon_bands": time_horizon_bands,
             "risk_level_summary": overall_risk_level,
             "risk_score": str(risk_score),
@@ -617,11 +629,21 @@ RISK FACTORS TO MONITOR:
                 "savings_rate": f"{financial_ratios['savings_rate']:.1f}%",
                 "liquidity_ratio": f"{financial_ratios['liquidity_ratio']:.1f} months",
                 "debt_to_asset": f"{financial_ratios['debt_to_asset']:.1f}%"
+            },
+            # Add sector and region data for equity selection agent
+            "equity_selection_params": {
+                "sectors": liquidity_constraints.get("sector_preferences", []),
+                "regions": liquidity_constraints.get("region_preferences", []),
+                "volatility_target": volatility_target,
+                "risk_score": risk_score,
+                "liquidity_score": liquidity_constraints.get("liquidity_score", 0),
+                "age_factor": liquidity_constraints.get("age_factor", 35),
+                "dependent_factor": liquidity_constraints.get("dependent_factor", 0)
             }
         }
     
     def _validate_input(self, context: AgentContext) -> Dict[str, Any]:
-        """Validate input for risk analytics agent."""
+        """Validate input for risk analytics agent including sector and region preferences."""
         base_validation = super()._validate_input(context)
         if not base_validation["valid"]:
             return base_validation
@@ -638,6 +660,32 @@ RISK FACTORS TO MONITOR:
             return {"valid": False, "error": "Age must be between 18 and 100"}
         
         if not (1 <= assessment['risk_tolerance'] <= 10):
+            return {"valid": False, "error": "Risk tolerance must be between 1 and 10"}
+        
+        if assessment['time_horizon'] < 1:
+            return {"valid": False, "error": "Time horizon must be at least 1 year"}
+        
+        # Validate sector preferences if provided
+        sector_preferences = assessment.get('sector_preferences', [])
+        if sector_preferences:
+            valid_sectors = [
+                'Technology', 'Healthcare', 'Financial', 'Consumer Discretionary', 
+                'Consumer Staples', 'Energy', 'Industrials', 'Materials', 
+                'Real Estate', 'Utilities', 'Communication Services'
+            ]
+            invalid_sectors = [s for s in sector_preferences if s not in valid_sectors]
+            if invalid_sectors:
+                return {"valid": False, "error": f"Invalid sectors: {invalid_sectors}. Valid sectors: {valid_sectors}"}
+        
+        # Validate region preferences if provided
+        region_preferences = assessment.get('region_preferences', [])
+        if region_preferences:
+            valid_regions = ['US', 'HK', 'EU', 'JP', 'CA', 'AU', 'UK', 'CN']
+            invalid_regions = [r for r in region_preferences if r not in valid_regions]
+            if invalid_regions:
+                return {"valid": False, "error": f"Invalid regions: {invalid_regions}. Valid regions: {valid_regions}"}
+        
+        return {"valid": True} 10):
             return {"valid": False, "error": "Risk tolerance must be between 1 and 10"}
         
         if assessment['time_horizon'] < 1:
