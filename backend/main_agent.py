@@ -3,42 +3,36 @@ Main Agent for Investment Portfolio Management
 
 This is the orchestrator agent that coordinates all other agents in the investment
 portfolio management system using LangGraph workflow. It manages the complete
-pipeline from user discovery to final portfolio recommendations.
+pipeline from user profile to final portfolio recommendations.
 
 Workflow:
-1. Discovery Agent - Processes user assessment data
-2. Risk Analytics Agent - Analyzes risk profile and generates risk blueprint
-3. Portfolio Construction - Optimizes portfolio allocation based on risk profile
-4. Selection Agent - Selects specific securities for each asset class
-5. Communication Agent - Generates final investment report
+1. Risk Analytics Agent - Analyzes risk profile and generates risk blueprint
+2. Portfolio Construction - Optimizes portfolio allocation based on risk profile  
+3. Selection Agent - Selects specific securities for each asset class
+4. Communication Agent - Generates final investment report
 
 Configuration:
 - Uses environment variables for WatsonX API credentials (via watsonx_utils.py)
 - Required .env variables: WATSONX_APIKEY, WATSONX_URL, PROJ_ID
 - See watsonx_utils.py for proper credential configuration
-
-Author: AI Investment Portfolio Team
-Date: October 2024
 """
 
-import json
 import os
 import time
 import logging
 from datetime import datetime
 from typing import Dict, List, Any, Optional, TypedDict
-from pathlib import Path
 
 # LangGraph imports
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 
 # Import individual agents
-from discovery_agent import DiscoveryAgent
 from risk_analytics_agent.risk_analytics_agent import RiskAnalyticsAgent
 from risk_analytics_agent.base_agent import AgentContext
 from selection.selection_agent import run_selection_agent
 from communication_agent import CommunicationAgent
+from profile_processor import UserProfile
 
 # Configure logging
 logging.basicConfig(
@@ -58,7 +52,6 @@ try:
 except ImportError:
     WATSONX_AVAILABLE = False
     logger.warning("WatsonX utilities not available")
-
 
 def get_watsonx_llm():
     """Get WatsonX LLM using proper environment variables"""
@@ -82,71 +75,15 @@ def get_watsonx_llm():
 # STATE DEFINITIONS FOR EACH NODE
 # =============================================================================
 
-class ProcessedUserProfile(TypedDict):
-    """Structure of the processed user profile from Discovery Agent"""
-    goals: List[Dict[str, Any]]  # List of goal objects with goal_type, description, priority, target_date
-    time_horizon: int  # Investment time horizon in years
-    risk_tolerance: str  # Risk tolerance level (low/medium/high)
-    income: float  # Annual income
-    savings_rate: float  # Monthly savings amount
-    liabilities: float  # Total debt/liabilities
-    liquidity_needs: str  # Emergency fund requirements (low/medium/high)
-    personal_values: Dict[str, Any]  # ESG preferences and investment themes
-    esg_prioritization: bool  # Whether to prioritize ESG stocks
-    market_selection: List[str]  # Selected stock markets (HK, US, etc.)
-    timestamp: str  # ISO format timestamp
-    profile_id: str  # Unique profile identifier
-
-
-class MainAgentState(TypedDict):
-    """Main state object that flows through all nodes in the workflow"""
-    
-    # Input data
-    frontend_assessment_data: Dict[str, Any]
-    
-    # Node-specific states
-    discovery_state: Optional[Dict[str, Any]]
-    risk_analysis_state: Optional[Dict[str, Any]]
-    portfolio_construction_state: Optional[Dict[str, Any]]
-    selection_state: Optional[Dict[str, Any]]
-    communication_state: Optional[Dict[str, Any]]
-    
-    # Execution metadata
-    start_time: float
-    execution_time: float
-    current_node: str
-    
-    # Results and outputs
-    user_profile: Optional[ProcessedUserProfile]
-    risk_blueprint: Optional[Dict[str, Any]]
-    portfolio_allocation: Optional[Dict[str, Any]]
-    security_selections: Optional[Dict[str, Any]]
-    final_report: Optional[Dict[str, Any]]
-    
-    # Error handling
-    success: bool
-    error: Optional[str]
-    node_errors: Dict[str, str]
-    
-    # Configuration
-    config: Dict[str, Any]
-
-
-class DiscoveryInputState(TypedDict):
-    """Input state for Discovery Agent node"""
-    frontend_assessment_data: Dict[str, Any]
-    config: Dict[str, Any]
-
-
 class RiskAnalysisInputState(TypedDict):
     """Input state for Risk Analytics Agent node"""
-    user_profile: ProcessedUserProfile
+    user_profile: UserProfile
     config: Dict[str, Any]
 
 
 class PortfolioConstructionInputState(TypedDict):
     """Input state for Portfolio Construction node"""
-    user_profile: ProcessedUserProfile
+    user_profile: UserProfile
     risk_blueprint: Dict[str, Any]  # Risk analysis results including risk_capacity, risk_tolerance, etc.
     config: Dict[str, Any]
 
@@ -154,17 +91,54 @@ class PortfolioConstructionInputState(TypedDict):
 class SelectionInputState(TypedDict):
     """Input state for Selection Agent node"""
     portfolio_allocation: Dict[str, Any]  # Contains filtered_tickers, filtered_weights, portfolio_metrics
-    user_profile: ProcessedUserProfile
+    user_profile: UserProfile
     config: Dict[str, Any]
 
 
 class CommunicationInputState(TypedDict):
     """Input state for Communication Agent node"""
-    user_profile: ProcessedUserProfile
+    user_profile: UserProfile
     risk_blueprint: Dict[str, Any]
     portfolio_allocation: Dict[str, Any]
     security_selections: Dict[str, Any]  # Final security selections by asset class
     config: Dict[str, Any]
+
+
+class ExecutionMetadataState(TypedDict):
+    """State for execution tracking and metadata"""
+    start_time: float
+    execution_time: float
+    current_node: str
+    success: bool
+    error: Optional[str]
+    node_errors: Dict[str, str]
+
+
+class NodeResultsState(TypedDict):
+    """State for storing results from each node"""
+    risk_analysis_state: Optional[Dict[str, Any]]
+    portfolio_construction_state: Optional[Dict[str, Any]]
+    selection_state: Optional[Dict[str, Any]]
+    communication_state: Optional[Dict[str, Any]]
+
+
+class WorkflowOutputState(TypedDict):
+    """State for final workflow outputs"""
+    risk_blueprint: Optional[Dict[str, Any]]
+    portfolio_allocation: Optional[Dict[str, Any]]
+    security_selections: Optional[Dict[str, Any]]
+    final_report: Optional[Dict[str, Any]]
+
+
+class MainAgentState(RiskAnalysisInputState, PortfolioConstructionInputState, 
+                    SelectionInputState, CommunicationInputState, 
+                    ExecutionMetadataState, NodeResultsState, 
+                    WorkflowOutputState, TypedDict):
+    """
+    Main state object that flows through all nodes in the workflow.
+    Combines all input states, execution metadata, node results, and workflow outputs.
+    """
+    pass
 
 
 # =============================================================================
@@ -227,10 +201,6 @@ class MainAgent:
             self.llm = get_watsonx_llm()
             
             # Initialize individual agents
-            self.discovery_agent = DiscoveryAgent(
-                output_dir=self.config.get("shared_data_dir", "./shared_data")
-            )
-            
             if self.llm:
                 self.risk_analytics_agent = RiskAnalyticsAgent(self.llm)
             else:
@@ -256,15 +226,13 @@ class MainAgent:
         workflow = StateGraph(MainAgentState)
         
         # Add nodes for each agent
-        workflow.add_node("discovery", self.discovery_node)
         workflow.add_node("risk_analysis", self.risk_analysis_node)
         workflow.add_node("portfolio_construction", self.portfolio_construction_node)
         workflow.add_node("selection", self.selection_node)
         workflow.add_node("communication", self.communication_node)
         
         # Add edges to define the sequential flow
-        workflow.add_edge(START, "discovery")
-        workflow.add_edge("discovery", "risk_analysis")
+        workflow.add_edge(START, "risk_analysis")
         workflow.add_edge("risk_analysis", "portfolio_construction")
         workflow.add_edge("portfolio_construction", "selection")
         workflow.add_edge("selection", "communication")
@@ -279,55 +247,6 @@ class MainAgent:
     # =============================================================================
     # WORKFLOW NODE IMPLEMENTATIONS
     # =============================================================================
-
-    def discovery_node(self, state: MainAgentState) -> MainAgentState:
-        """
-        Node 1: Discovery Agent - Process user assessment data into structured profile
-        
-        Args:
-            state: Current workflow state
-            
-        Returns:
-            Updated state with user profile data
-        """
-        logger.info("\n" + "="*60)
-        logger.info("NODE 1: DISCOVERY AGENT")
-        logger.info("="*60)
-        
-        try:
-            state["current_node"] = "discovery"
-            
-            # Extract input data
-            frontend_data = state["frontend_assessment_data"]
-            
-            if not frontend_data:
-                raise ValueError("No frontend assessment data provided")
-            
-            logger.info(f"Processing frontend assessment data with {len(frontend_data)} fields")
-            
-            # Run Discovery Agent
-            discovery_result = self.discovery_agent.generate_user_profile(frontend_data)
-            
-            if discovery_result["status"] != "success":
-                raise Exception(f"Discovery Agent failed: {discovery_result.get('message', 'Unknown error')}")
-            
-            # Update state
-            state["discovery_state"] = discovery_result
-            state["user_profile"] = discovery_result["profile_data"]
-            
-            logger.info(f"✅ Discovery completed successfully")
-            logger.info(f"User profile ID: {discovery_result['profile_data']['profile_id']}")
-            logger.info(f"Risk tolerance: {discovery_result['profile_data']['risk_tolerance']}")
-            logger.info(f"Time horizon: {discovery_result['profile_data']['time_horizon']} years")
-            
-            return state
-            
-        except Exception as e:
-            logger.error(f"❌ Discovery node failed: {str(e)}")
-            state["success"] = False
-            state["error"] = f"Discovery node failed: {str(e)}"
-            state["node_errors"]["discovery"] = str(e)
-            return state
 
     async def risk_analysis_node(self, state: MainAgentState) -> MainAgentState:
         """
@@ -352,7 +271,7 @@ class MainAgent:
             
             user_profile = state["user_profile"]
             if user_profile:
-                logger.info(f"Analyzing risk profile for user: {user_profile.get('profile_id', 'Unknown')}")
+                logger.info(f"Analyzing risk profile for user: {user_profile.profile_id}")
             
             # Check if risk analytics agent is available
             if not self.risk_analytics_agent:
@@ -364,7 +283,7 @@ class MainAgent:
                 
             agent_context = AgentContext(
                 session_id=f"main_agent_{int(time.time())}",
-                user_assessment=dict(user_profile)  # Convert TypedDict to Dict[str, Any]
+                user_assessment=user_profile.to_dict()  # Use to_dict() method
             )
             
             # Run Risk Analytics Agent
@@ -574,7 +493,7 @@ class MainAgent:
             filtered_weights = portfolio_allocation.get("filtered_weights", {})
             
             # Extract regions and sectors from user profile
-            personal_values = user_profile.get("personal_values", {}) if user_profile else {}
+            personal_values = user_profile.personal_values if user_profile else {}
             esg_preferences = personal_values.get("esg_preferences", {})
             
             # Default regions (can be enhanced based on user preferences)
@@ -703,7 +622,7 @@ class MainAgent:
             # Save results from each agent with null checks
             user_profile = state.get("user_profile")
             if user_profile:
-                save_my_agent_results("discovery", dict(user_profile))  # Convert TypedDict to Dict[str, Any]
+                save_my_agent_results("discovery", user_profile.to_dict())  # Convert UserProfile to Dict[str, Any]
             
             risk_blueprint = state.get("risk_blueprint")
             if risk_blueprint:
@@ -725,12 +644,12 @@ class MainAgent:
         except Exception as e:
             logger.warning(f"Failed to save data for communication agent: {e}")
 
-    def run_complete_workflow(self, frontend_assessment_data: Dict[str, Any]) -> Dict[str, Any]:
+    def run_complete_workflow(self, user_profile: UserProfile) -> Dict[str, Any]:
         """
         Run the complete investment portfolio workflow
         
         Args:
-            frontend_assessment_data: Raw assessment data from frontend
+            user_profile: UserProfile object with user's assessment data
             
         Returns:
             Dictionary with complete workflow results
@@ -749,8 +668,7 @@ class MainAgent:
             
             # Initialize state
             initial_state: MainAgentState = {
-                "frontend_assessment_data": frontend_assessment_data,
-                "discovery_state": None,
+                "user_profile": user_profile,
                 "risk_analysis_state": None,
                 "portfolio_construction_state": None,
                 "selection_state": None,
@@ -758,7 +676,6 @@ class MainAgent:
                 "start_time": start_time,
                 "execution_time": 0.0,
                 "current_node": "",
-                "user_profile": None,
                 "risk_blueprint": None,
                 "portfolio_allocation": None,
                 "security_selections": None,
@@ -840,31 +757,38 @@ class MainAgent:
 def main() -> int:
     """Main entry point for standalone testing"""
     try:
-        # Test data (matching DiscoveryFlow component structure)
-        test_frontend_data = {
-            "goals": [
-                {"id": "retirement", "label": "Retirement Planning", "priority": 1},
-                {"id": "house", "label": "Buy a Home", "priority": 2}
+        # Create test UserProfile object directly
+        test_user_profile = UserProfile(
+            goals=[
+                {"goal_type": "retirement", "description": "Retirement Planning", "priority": 1, "target_date": None},
+                {"goal_type": "house", "description": "Buy a Home", "priority": 2, "target_date": None}
             ],
-            "timeHorizon": 15,
-            "riskTolerance": "moderate",
-            "annualIncome": 75000,
-            "monthlySavings": 2000,
-            "totalDebt": 25000,
-            "emergencyFundMonths": "6 months",
-            "values": {
-                "avoidIndustries": ["tobacco", "weapons"],
-                "preferIndustries": ["technology", "renewable_energy"],
-                "customConstraints": "Focus on sustainable investments"
-            }
-        }
+            time_horizon=15,
+            risk_tolerance="medium",  # mapped from "moderate"
+            income=75000.0,
+            savings_rate=2000.0,
+            liabilities=25000.0,
+            liquidity_needs="medium",  # mapped from "6 months"
+            personal_values={
+                "esg_preferences": {
+                    "avoid_industries": ["tobacco", "weapons"],
+                    "prefer_industries": ["technology", "renewable_energy"],
+                    "custom_constraints": "Focus on sustainable investments"
+                },
+                "investment_themes": ["technology", "renewable_energy"]
+            },
+            esg_prioritization=True,
+            market_selection=["US"],
+            timestamp=datetime.now().isoformat(),
+            profile_id=f"profile_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
         
         # Initialize Main Agent
         logger.info("Initializing Main Agent for testing...")
         main_agent = MainAgent()
         
         # Run complete workflow
-        result = main_agent.run_complete_workflow(test_frontend_data)
+        result = main_agent.run_complete_workflow(test_user_profile)
         
         # Display results
         print("\n" + "="*80)
