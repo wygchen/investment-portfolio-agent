@@ -17,8 +17,7 @@ import yfinance_cache as yfc
 import requests
 import os
 import logging
-from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from io import StringIO
 
 # Set up logging
@@ -140,66 +139,87 @@ class TickerManager:
         """
         logger.info("Using fallback S&P 500 ticker list...")
         
-        # Sample of major S&P 500 companies
-        fallback_tickers = [
-            # Technology
-            'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'NVDA', 'META', 'TSLA',
-            'AVGO', 'ORCL', 'CRM', 'ADBE', 'CSCO', 'ACN', 'TXN', 'QCOM',
-            'AMD', 'INTC', 'IBM', 'INTU', 'NOW', 'AMAT', 'MU', 'ADI',
-            
-            # Financial Services
-            'BRK-B', 'JPM', 'V', 'MA', 'BAC', 'WFC', 'GS', 'MS', 'AXP',
-            'SPGI', 'BLK', 'C', 'SCHW', 'CB', 'MMC', 'ICE', 'PGR',
-            
-            # Healthcare
-            'UNH', 'JNJ', 'PFE', 'LLY', 'ABBV', 'MRK', 'TMO', 'ABT', 'DHR',
-            'BMY', 'CVS', 'MDT', 'CI', 'GILD', 'BSX', 'ISRG', 'VRTX',
-            
-            # Consumer Discretionary
-            'HD', 'MCD', 'NKE', 'LOW', 'SBUX', 'TJX', 'F', 'GM',
-            'MAR', 'HLT', 'ABNB', 'BKNG', 'CMG', 'ORLY', 'AZO',
-            
-            # Consumer Staples
-            'WMT', 'PG', 'KO', 'PEP', 'COST', 'WBA', 'EL', 'CL', 'KMB',
-            'GIS', 'HSY', 'K', 'CPB', 'CAG', 'SJM', 'CHD',
-            
-            # Energy
-            'XOM', 'CVX', 'COP', 'EOG', 'SLB', 'PXD', 'MPC', 'VLO',
-            'PSX', 'OXY', 'BKR', 'HAL', 'DVN', 'FANG', 'EQT',
-            
-            # Industrials
-            'LIN', 'CAT', 'BA', 'RTX', 'HON', 'UPS', 'DE', 'LMT',
-            'MMM', 'GE', 'UNP', 'ADP', 'TT', 'ETN', 'ITW', 'CSX',
-            
-            # Communication Services
-            'DIS', 'CMCSA', 'VZ', 'T', 'TMUS', 'NFLX',
-            'CHTR', 'PARA', 'WBD', 'FOXA', 'FOX', 'MTCH', 'PINS',
-            
-            # Utilities
-            'NEE', 'SO', 'DUK', 'AEP', 'SRE', 'D', 'PEG', 'EXC',
-            'XEL', 'ED', 'ETR', 'WEC', 'ES', 'FE', 'EIX', 'PPL',
-            
-            # Real Estate
-            'AMT', 'PLD', 'CCI', 'EQIX', 'PSA', 'WELL', 'SPG', 'O',
-            'SBAC', 'DLR', 'REG', 'ARE', 'MAA', 'EQR', 'VTR', 'ESS',
-            
-            # Materials
-            'APD', 'SHW', 'FCX', 'NEM', 'DOW', 'DD', 'VMC',
-            'MLM', 'ECL', 'PPG', 'RPM', 'FMC', 'ALB', 'CF', 'EMN'
+        # 5 representative companies per sector with Yahoo Finance-aligned metadata
+        fallback_list = [
+            # Technology (Yahoo sector: Technology)
+            {'ticker': 'AAPL', 'region': 'US', 'sector': 'Technology', 'industry': 'Consumer Electronics', 'name': 'Apple Inc.'},
+            {'ticker': 'MSFT', 'region': 'US', 'sector': 'Technology', 'industry': 'Software—Infrastructure', 'name': 'Microsoft Corporation'},
+            {'ticker': 'NVDA', 'region': 'US', 'sector': 'Technology', 'industry': 'Semiconductors', 'name': 'NVIDIA Corporation'},
+            {'ticker': 'ORCL', 'region': 'US', 'sector': 'Technology', 'industry': 'Software—Infrastructure', 'name': 'Oracle Corporation'},
+            {'ticker': 'ADBE', 'region': 'US', 'sector': 'Technology', 'industry': 'Software—Infrastructure', 'name': 'Adobe Inc.'},
+
+            # Financial Services (Yahoo sector: Financial Services)
+            {'ticker': 'JPM', 'region': 'US', 'sector': 'Financial Services', 'industry': 'Banks—Diversified', 'name': 'JPMorgan Chase & Co.'},
+            {'ticker': 'V', 'region': 'US', 'sector': 'Financial Services', 'industry': 'Credit Services', 'name': 'Visa Inc.'},
+            {'ticker': 'MA', 'region': 'US', 'sector': 'Financial Services', 'industry': 'Credit Services', 'name': 'Mastercard Incorporated'},
+            {'ticker': 'BAC', 'region': 'US', 'sector': 'Financial Services', 'industry': 'Banks—Diversified', 'name': 'Bank of America Corporation'},
+            {'ticker': 'BLK', 'region': 'US', 'sector': 'Financial Services', 'industry': 'Asset Management', 'name': 'BlackRock, Inc.'},
+
+            # Healthcare (Yahoo sector: Healthcare)
+            {'ticker': 'UNH', 'region': 'US', 'sector': 'Healthcare', 'industry': 'Healthcare Plans', 'name': 'UnitedHealth Group Incorporated'},
+            {'ticker': 'JNJ', 'region': 'US', 'sector': 'Healthcare', 'industry': 'Drug Manufacturers—General', 'name': 'Johnson & Johnson'},
+            {'ticker': 'LLY', 'region': 'US', 'sector': 'Healthcare', 'industry': 'Drug Manufacturers—General', 'name': 'Eli Lilly and Company'},
+            {'ticker': 'ABBV', 'region': 'US', 'sector': 'Healthcare', 'industry': 'Drug Manufacturers—General', 'name': 'AbbVie Inc.'},
+            {'ticker': 'TMO', 'region': 'US', 'sector': 'Healthcare', 'industry': 'Diagnostics & Research', 'name': 'Thermo Fisher Scientific Inc.'},
+
+            # Consumer Cyclical (Yahoo sector: Consumer Cyclical)
+            {'ticker': 'HD', 'region': 'US', 'sector': 'Consumer Cyclical', 'industry': 'Home Improvement Retail', 'name': 'The Home Depot, Inc.'},
+            {'ticker': 'NKE', 'region': 'US', 'sector': 'Consumer Cyclical', 'industry': 'Footwear & Accessories', 'name': 'NIKE, Inc.'},
+            {'ticker': 'MCD', 'region': 'US', 'sector': 'Consumer Cyclical', 'industry': 'Restaurants', 'name': "McDonald's Corporation"},
+            {'ticker': 'AMZN', 'region': 'US', 'sector': 'Consumer Cyclical', 'industry': 'Internet Retail', 'name': 'Amazon.com, Inc.'},
+            {'ticker': 'TJX', 'region': 'US', 'sector': 'Consumer Cyclical', 'industry': 'Apparel Retail', 'name': 'The TJX Companies, Inc.'},
+
+            # Consumer Defensive (Yahoo sector: Consumer Defensive)
+            {'ticker': 'WMT', 'region': 'US', 'sector': 'Consumer Defensive', 'industry': 'Discount Stores', 'name': 'Walmart Inc.'},
+            {'ticker': 'PG', 'region': 'US', 'sector': 'Consumer Defensive', 'industry': 'Household & Personal Products', 'name': 'The Procter & Gamble Company'},
+            {'ticker': 'KO', 'region': 'US', 'sector': 'Consumer Defensive', 'industry': 'Beverages—Non-Alcoholic', 'name': 'The Coca-Cola Company'},
+            {'ticker': 'COST', 'region': 'US', 'sector': 'Consumer Defensive', 'industry': 'Discount Stores', 'name': 'Costco Wholesale Corporation'},
+            {'ticker': 'PEP', 'region': 'US', 'sector': 'Consumer Defensive', 'industry': 'Beverages—Non-Alcoholic', 'name': 'PepsiCo, Inc.'},
+
+            # Energy (Yahoo sector: Energy)
+            {'ticker': 'XOM', 'region': 'US', 'sector': 'Energy', 'industry': 'Oil & Gas Integrated', 'name': 'Exxon Mobil Corporation'},
+            {'ticker': 'CVX', 'region': 'US', 'sector': 'Energy', 'industry': 'Oil & Gas Integrated', 'name': 'Chevron Corporation'},
+            {'ticker': 'SLB', 'region': 'US', 'sector': 'Energy', 'industry': 'Oil & Gas Equipment & Services', 'name': 'SLB'},
+            {'ticker': 'EOG', 'region': 'US', 'sector': 'Energy', 'industry': 'Oil & Gas E&P', 'name': 'EOG Resources, Inc.'},
+            {'ticker': 'COP', 'region': 'US', 'sector': 'Energy', 'industry': 'Oil & Gas E&P', 'name': 'ConocoPhillips'},
+
+            # Industrials (Yahoo sector: Industrials)
+            {'ticker': 'CAT', 'region': 'US', 'sector': 'Industrials', 'industry': 'Farm & Heavy Construction Machinery', 'name': 'Caterpillar Inc.'},
+            {'ticker': 'UNP', 'region': 'US', 'sector': 'Industrials', 'industry': 'Railroads', 'name': 'Union Pacific Corporation'},
+            {'ticker': 'RTX', 'region': 'US', 'sector': 'Industrials', 'industry': 'Aerospace & Defense', 'name': 'RTX Corporation'},
+            {'ticker': 'DE', 'region': 'US', 'sector': 'Industrials', 'industry': 'Farm & Heavy Construction Machinery', 'name': 'Deere & Company'},
+            {'ticker': 'HON', 'region': 'US', 'sector': 'Industrials', 'industry': 'Specialty Industrial Machinery', 'name': 'Honeywell International Inc.'},
+
+            # Communication Services (Yahoo sector: Communication Services)
+            {'ticker': 'GOOGL', 'region': 'US', 'sector': 'Communication Services', 'industry': 'Internet Content & Information', 'name': 'Alphabet Inc.'},
+            {'ticker': 'META', 'region': 'US', 'sector': 'Communication Services', 'industry': 'Internet Content & Information', 'name': 'Meta Platforms, Inc.'},
+            {'ticker': 'DIS', 'region': 'US', 'sector': 'Communication Services', 'industry': 'Entertainment', 'name': 'The Walt Disney Company'},
+            {'ticker': 'CMCSA', 'region': 'US', 'sector': 'Communication Services', 'industry': 'Telecom Services', 'name': 'Comcast Corporation'},
+            {'ticker': 'NFLX', 'region': 'US', 'sector': 'Communication Services', 'industry': 'Entertainment', 'name': 'Netflix, Inc.'},
+
+            # Utilities (Yahoo sector: Utilities)
+            {'ticker': 'NEE', 'region': 'US', 'sector': 'Utilities', 'industry': 'Utilities—Regulated Electric', 'name': 'NextEra Energy, Inc.'},
+            {'ticker': 'SO', 'region': 'US', 'sector': 'Utilities', 'industry': 'Utilities—Regulated Electric', 'name': 'The Southern Company'},
+            {'ticker': 'DUK', 'region': 'US', 'sector': 'Utilities', 'industry': 'Utilities—Regulated Electric', 'name': 'Duke Energy Corporation'},
+            {'ticker': 'AEP', 'region': 'US', 'sector': 'Utilities', 'industry': 'Utilities—Regulated Electric', 'name': 'American Electric Power Company, Inc.'},
+            {'ticker': 'SRE', 'region': 'US', 'sector': 'Utilities', 'industry': 'Utilities—Regulated Gas', 'name': 'Sempra'},
+
+            # Real Estate (Yahoo sector: Real Estate)
+            {'ticker': 'AMT', 'region': 'US', 'sector': 'Real Estate', 'industry': 'REIT—Specialty', 'name': 'American Tower Corporation'},
+            {'ticker': 'PLD', 'region': 'US', 'sector': 'Real Estate', 'industry': 'REIT—Industrial', 'name': 'Prologis, Inc.'},
+            {'ticker': 'CCI', 'region': 'US', 'sector': 'Real Estate', 'industry': 'REIT—Specialty', 'name': 'Crown Castle Inc.'},
+            {'ticker': 'EQIX', 'region': 'US', 'sector': 'Real Estate', 'industry': 'REIT—Specialty', 'name': 'Equinix, Inc.'},
+            {'ticker': 'PSA', 'region': 'US', 'sector': 'Real Estate', 'industry': 'REIT—Specialty', 'name': 'Public Storage'},
+
+            # Basic Materials (Yahoo sector: Basic Materials)
+            {'ticker': 'LIN', 'region': 'US', 'sector': 'Basic Materials', 'industry': 'Specialty Chemicals', 'name': 'Linde plc'},
+            {'ticker': 'SHW', 'region': 'US', 'sector': 'Basic Materials', 'industry': 'Specialty Chemicals', 'name': 'The Sherwin-Williams Company'},
+            {'ticker': 'APD', 'region': 'US', 'sector': 'Basic Materials', 'industry': 'Specialty Chemicals', 'name': 'Air Products and Chemicals, Inc.'},
+            {'ticker': 'FCX', 'region': 'US', 'sector': 'Basic Materials', 'industry': 'Copper', 'name': 'Freeport-McMoRan Inc.'},
+            {'ticker': 'NEM', 'region': 'US', 'sector': 'Basic Materials', 'industry': 'Gold', 'name': 'Newmont Corporation'},
         ]
-        
-        # Convert to proper format
-        fallback_list = []
-        for ticker in fallback_tickers:
-            fallback_list.append({
-                'ticker': ticker,
-                'region': 'US',
-                'sector': 'Unknown',
-                'industry': 'Unknown',
-                'name': 'Unknown'
-            })
-        
-        logger.info(f"Prepared {len(fallback_list)} fallback tickers")
+
+        logger.info(f"Loaded {len(fallback_list)} fallback tickers")
         return fallback_list
     
     def load_hk_tickers(self) -> List[Dict[str, str]]:
@@ -364,36 +384,6 @@ class StockDataFetcher:
                 info = stock.info if hasattr(stock, 'info') else {}
                 
                 if info:
-                    # Get news data (top 10 news items)
-                    news_data = []
-                    try:
-                        if hasattr(stock, 'news') and stock.news:
-                            # Get top 10 news items and extract relevant information
-                            news_items = stock.news[:10] if len(stock.news) >= 10 else stock.news
-                            for news_item in news_items:
-                                if isinstance(news_item, dict):
-                                    # Handle new yfinance news structure
-                                    content = news_item.get('content', {})
-                                    if isinstance(content, dict):
-                                        news_summary = {
-                                            'title': content.get('title', ''),
-                                            'summary': content.get('summary', ''),
-                                            'description': content.get('description', ''),
-                                            'publisher': content.get('provider', {}).get('displayName', ''),
-                                            'link': content.get('canonicalUrl', {}).get('url', ''),
-                                            'pubDate': content.get('pubDate', ''),
-                                            'displayTime': content.get('displayTime', '')
-                                        }
-                                        news_data.append(news_summary)
-                        
-                        # Convert to JSON string for storage
-                        import json
-                        news_json = json.dumps(news_data) if news_data else ''
-                        
-                    except Exception as e:
-                        logger.warning(f"Error fetching news for {ticker}: {e}")
-                        news_json = ''
-                    
                     # Extract key fundamental metrics
                     fundamental_record = {
                         'ticker': ticker,
@@ -407,7 +397,6 @@ class StockDataFetcher:
                         'current_price': info.get('currentPrice'),
                         'trailing_eps': info.get('trailingEps'),
                         'beta': info.get('beta'),
-                        'news': news_json,
                     }
                     
                     fundamental_data[ticker] = fundamental_record

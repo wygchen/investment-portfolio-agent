@@ -9,19 +9,11 @@ Usage:
 """
 
 import os
-import sys
 import pandas as pd
 import logging
 from typing import Optional, Tuple, List
 
-# Add the src directory to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-
-from backend.selection.equity_selection_agent.src.stock_universe import (
-    load_latest_data, 
-    should_refresh_data, 
-    run_full_data_collection
-)
+from stock_database import StockDatabase
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -37,16 +29,23 @@ class DataAccess:
             # Default to data directory relative to this file's parent directory
             data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
         self.data_dir = data_dir
+        
+        # Initialize StockDatabase with SQLite database in the data directory
+        db_path = os.path.join(data_dir, "stock_data.db")
+        self.stock_db = StockDatabase(db_path)
+        
         self._universe_df = None
         self._price_data_df = None
         self._fundamental_data_df = None
         self._data_loaded = False
     
     def _load_data(self, force_reload: bool = False) -> None:
-        """Load data from CSV files if not already loaded."""
+        """Load data from the StockDatabase if not already loaded."""
         if not self._data_loaded or force_reload:
-            logger.info("Loading data from CSV files...")
-            self._universe_df, self._price_data_df, self._fundamental_data_df = load_latest_data(self.data_dir)
+            logger.info("Loading data from StockDatabase...")
+            self._universe_df = self.stock_db.get_universe()
+            self._price_data_df = self.stock_db.get_price_data()
+            self._fundamental_data_df = self.stock_db.get_fundamental_data()
             self._data_loaded = True
     
     def get_universe(self, force_reload: bool = False) -> Optional[pd.DataFrame]:
@@ -70,32 +69,20 @@ class DataAccess:
         
         Args:
             tickers: List of specific tickers to get (None = all)
-            force_reload: Force reload from CSV files
+            force_reload: Force reload from database
             
         Returns:
             DataFrame with price data or None if not available
         """
-        self._load_data(force_reload)
+        if force_reload:
+            self._load_data(force_reload=True)
+        else:
+            self._load_data()
         
-        if self._price_data_df is None:
-            return None
-        
-        if tickers is None:
-            return self._price_data_df
-        
-        # Filter for specific tickers if requested
-        try:
-            # Check if price data has MultiIndex columns (ticker, metric)
-            if isinstance(self._price_data_df.columns, pd.MultiIndex):
-                # Filter by ticker in the MultiIndex
-                available_tickers = [t for t in tickers if t in self._price_data_df.columns.levels[1]]
-                if available_tickers:
-                    return self._price_data_df.loc[:, (slice(None), available_tickers)]
-            else:
-                # Simple column filtering
-                return self._price_data_df[self._price_data_df['Ticker'].isin(tickers)]
-        except Exception as e:
-            logger.warning(f"Error filtering price data for tickers {tickers}: {e}")
+        # Use the StockDatabase method directly for specific tickers
+        if tickers is not None:
+            return self.stock_db.get_price_data(tickers=tickers)
+        else:
             return self._price_data_df
     
     def get_fundamental_data(self, 
@@ -106,21 +93,18 @@ class DataAccess:
         
         Args:
             tickers: List of specific tickers to get (None = all)
-            force_reload: Force reload from CSV files
+            force_reload: Force reload from database
             
         Returns:
             DataFrame with fundamental data or None if not available
         """
-        self._load_data(force_reload)
+        if force_reload:
+            self._load_data(force_reload=True)
+        else:
+            self._load_data()
         
-        if self._fundamental_data_df is None:
-            return None
-        
-        if tickers is None:
-            return self._fundamental_data_df
-        
-        # Filter for specific tickers
-        return self._fundamental_data_df[self._fundamental_data_df['ticker'].isin(tickers)]
+        # Use the StockDatabase method directly for specific tickers
+        return self.stock_db.get_fundamental_data(tickers=tickers)
     
     def get_sector_data(self, sector: str, force_reload: bool = False) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], Optional[pd.DataFrame]]:
         """
@@ -183,23 +167,29 @@ class DataAccess:
         Returns:
             True if data was refreshed, False if no refresh was needed
         """
-        if should_refresh_data(self.data_dir, max_age_hours):
-            logger.info("Data needs refreshing, collecting fresh data...")
-            try:
-                run_full_data_collection(
-                    save_to_csv=True,
-                    period="1y",
-                    interval="1d",
-                    output_dir=self.data_dir
-                )
-                # Reload the fresh data
+        try:
+            # Check if database has recent data using data summary
+            summary = self.stock_db.get_data_summary()
+            
+            # If we have no data, we need to refresh
+            if (summary['universe']['active_tickers'] == 0 or 
+                summary['price_data']['total_records'] == 0):
+                logger.info("No data available, performing refresh...")
+                self.stock_db.refresh_universe(include_us=True, include_hk=True)
+                self.stock_db.update_data(update_fundamentals=True)
                 self._load_data(force_reload=True)
                 logger.info("Data successfully refreshed")
                 return True
-            except Exception as e:
-                logger.error(f"Error refreshing data: {e}")
-                return False
-        return False
+            else:
+                # Update data (incremental update)
+                logger.info("Performing incremental data update...")
+                update_results = self.stock_db.update_data()
+                self._load_data(force_reload=True)
+                logger.info(f"Data updated: {update_results}")
+                return True
+        except Exception as e:
+            logger.error(f"Error refreshing data: {e}")
+            return False
 
 
 # Global instance for easy access
@@ -221,12 +211,9 @@ def ensure_data_available(max_age_hours: int = 24) -> bool:
     if not _data_access.is_data_available():
         logger.info("No data available, collecting fresh data...")
         try:
-            run_full_data_collection(
-                save_to_csv=True,
-                period="1y",
-                interval="1d",
-                output_dir=_data_access.data_dir
-            )
+            # Use the new database approach
+            _data_access.stock_db.refresh_universe(include_us=True, include_hk=True)
+            _data_access.stock_db.update_data(update_fundamentals=True)
             _data_access._load_data(force_reload=True)
         except Exception as e:
             logger.error(f"Error collecting initial data: {e}")

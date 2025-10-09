@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 from dataclasses import dataclass, asdict
 
-from .config import Config
+from config import Config
 
 # Set up logging
 logger = logging.getLogger(__name__)

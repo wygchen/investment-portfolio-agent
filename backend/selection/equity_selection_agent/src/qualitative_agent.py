@@ -14,25 +14,35 @@ import json
 from typing import Dict, List, Optional, Tuple, Any, TypedDict
 from dataclasses import dataclass
 
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 
-from .config import Config
+from config import Config
+
+import sys
+import os
+
+# Add the portfolio_construction_and_market_sentiment directory to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+portfolio_dir = os.path.join(current_dir, "..", "..", "..", "portfolio_construction_and_market_sentiment")
+sys.path.append(portfolio_dir)
+
+from market_sentiment import get_yahoo_news_description  # type: ignore
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Import watsonx utilities if available
+# Import watsonx utilities if available without modifying sys.path
 try:
-    import sys
-    import os
-    sys.path.append(os.path.join(os.path.dirname(__file__), '../../../'))
-    from watsonx_utils import create_watsonx_llm
-except ImportError:
-    logger.warning("watsonx_utils not available - LLM functionality will be limited")
+    # Add the backend directory to the path to find watsonx_utils
+    backend_dir = os.path.join(current_dir, "..", "..", "..")
+    if backend_dir not in sys.path:
+        sys.path.append(backend_dir)
+    from watsonx_utils import create_watsonx_llm  # type: ignore
+except Exception as e:
+    logger.warning(f"watsonx_utils not available - LLM functionality will be limited: {e}")
     create_watsonx_llm = None
 
 
@@ -125,30 +135,51 @@ def extract_business_insights(news_data: str, llm=None) -> str:
     Returns:
         Key business insights and competitive factors from news analysis
     """
-    if not news_data or len(news_data.strip()) < 20:
-        return "Insufficient news data for meaningful analysis"
     
     # Try LLM-powered analysis first
     if llm is not None:
         try:
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", """You are an expert business analyst. Analyze the given company news data and extract key business insights.
-                
+            has_news = bool(news_data and news_data.strip())
+            if has_news:
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", """You are an expert business analyst. Analyze the given company news data and extract key business insights.
+
+STRICT CONSTRAINTS:
+- Strictly use ONLY the provided company news data as your source.
+- Do NOT use any external sources, prior knowledge, or assumptions.
+- If a detail is not present in the provided news, do not infer or fabricate it.
+
 Focus on identifying:
-                1. Market position and competitive standing
-                2. Innovation and technology focus
-                3. Growth indicators and expansion plans
-                4. Business challenges or risks
-                5. Competitive advantages or differentiators
-                6. Recent developments and strategic initiatives
-                
+1. Market position and competitive standing
+2. Innovation and technology focus
+3. Growth indicators and expansion plans
+4. Business challenges or risks
+5. Competitive advantages or differentiators
+6. Recent developments and strategic initiatives
+
 Provide a concise analysis highlighting the most important factors for investment evaluation.
-                Keep your response focused and under 200 words."""),
-                ("human", "Please analyze this company news data and extract key business insights:\n\n{news_data}")
-            ])
-            
-            chain = prompt | llm
-            response = chain.invoke({"news_data": news_data})
+Keep your response focused and under 200 words."""),
+                    ("human", "Please analyze this company news data and extract key business insights:\n\n{news_data}")
+                ])
+                chain = prompt | llm
+                response = chain.invoke({"news_data": news_data})
+            else:
+                # Fallback prompt when no news data is available
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", """You are an expert business analyst. Use only credible sources.
+Provide a concise, generic qualitative assessment framework for investment evaluation, tailored to a typical public company.
+Highlight:
+1. Market position and moat signals to check
+2. Innovation cadence and product pipeline indicators
+3. Growth drivers vs. headwinds to monitor
+4. Key risks (regulatory, competitive, execution)
+5. Management quality signals
+
+Keep under 150 words."""),
+                    ("human", "Provide the requested concise guidance.")
+                ])
+                chain = prompt | llm
+                response = chain.invoke({})
             
             # Extract content from response
             if hasattr(response, 'content'):
@@ -159,52 +190,6 @@ Provide a concise analysis highlighting the most important factors for investmen
         except Exception as e:
             logger.warning(f"LLM analysis failed, falling back to heuristics: {e}")
     
-    # Fallback to heuristic analysis
-    try:
-        # Try to parse news data as JSON
-        import json
-        news_items = json.loads(news_data) if news_data.startswith('[') else []
-        
-        # Extract text from news items for analysis
-        combined_text = ""
-        for item in news_items:
-            if isinstance(item, dict):
-                combined_text += item.get('title', '') + " " + item.get('summary', '') + " "
-        
-        analysis_text = combined_text.lower() if combined_text else news_data.lower()
-    except:
-        # If not JSON, treat as plain text
-        analysis_text = news_data.lower()
-    
-    insights = []
-    
-    # Market position indicators
-    leadership_words = ['leading', 'leader', 'largest', 'dominant', 'premier', 'top', 'market share']
-    if any(word in analysis_text for word in leadership_words):
-        insights.append("Recent news indicates strong market position")
-    
-    # Innovation indicators
-    innovation_words = ['innovative', 'technology', 'research', 'development', 'patent', 'breakthrough', 'launch']
-    if any(word in analysis_text for word in innovation_words):
-        insights.append("News shows focus on innovation and technology")
-    
-    # Growth indicators
-    growth_words = ['expansion', 'growing', 'growth', 'increasing', 'scaling', 'revenue', 'profit']
-    if any(word in analysis_text for word in growth_words):
-        insights.append("Recent news indicates growth trajectory")
-    
-    # Risk indicators
-    risk_words = ['challenging', 'declining', 'uncertainty', 'volatile', 'pressure', 'competition', 'lawsuit']
-    if any(word in analysis_text for word in risk_words):
-        insights.append("Some business challenges or risks mentioned in news")
-    
-    # Competitive advantage indicators
-    advantage_words = ['unique', 'proprietary', 'exclusive', 'specialized', 'differentiated', 'partnership']
-    if any(word in analysis_text for word in advantage_words):
-        insights.append("News indicates potential competitive advantages")
-    
-    return "; ".join(insights) if insights else "Limited insights from available news data"
-
 
 class QualitativeAnalysisAgent:
     """
@@ -214,7 +199,7 @@ class QualitativeAnalysisAgent:
     
     def __init__(self, config: Config, llm=None):
         self.config = config
-        self.enabled = False
+        self.enabled = True  # Enable by default for testing
         
         # Initialize LLM (try to create Watsonx LLM if none provided)
         self.llm = llm
@@ -234,6 +219,7 @@ class QualitativeAnalysisAgent:
         
         if self.llm is None:
             logger.warning("No LLM provided to QualitativeAnalysisAgent, using mock mode")
+            self.enabled = False  # Disable if no LLM available
             
         # Create the analysis workflow
         self.workflow = self._create_workflow()
@@ -262,7 +248,20 @@ class QualitativeAnalysisAgent:
     def _extract_insights_node(self, state: AgentState) -> AgentState:
         """Extract business insights from company news data"""
         try:
-            news_insights = extract_business_insights(state["business_summary"], llm=self.llm)
+            # Attempt to augment provided summary with fresh Yahoo Finance news (RAG)
+            yahoo_news: str = ""
+            try:
+                yahoo_news = get_yahoo_news_description(state["ticker"], max_articles=15) or ""
+            except Exception as e:
+                logger.warning(f"Yahoo news fetch failed for {state['ticker']}: {e}")
+
+            base_summary = state.get("business_summary", "") or ""
+            if yahoo_news and not yahoo_news.lower().startswith("error fetching news") and not yahoo_news.lower().startswith("no recent news"):
+                combined_news = f"{base_summary}\n\nRecent Yahoo Finance news: {yahoo_news}"
+            else:
+                combined_news = base_summary
+
+            news_insights = extract_business_insights(combined_news, llm=self.llm)
             
             message = HumanMessage(content=f"News insights for {state['ticker']}: {news_insights}")
             state["messages"].append(message)
@@ -332,7 +331,9 @@ class QualitativeAnalysisAgent:
                 
                 News Data: {business_summary}
                 
-                Based on the news insights and financial analysis above, provide your analysis as a JSON object with the required fields.""")
+                Financial Metrics: ROE={roe}, Debt-to-Equity={debt_to_equity}, P/E Ratio={pe_ratio}
+                
+                Based on the available information (news and/or financial metrics), provide your analysis as a JSON object with the required fields. If news data is limited, focus on financial metrics and general market knowledge.""")
             ])
             
             # Create the chain without JSON parser initially
@@ -342,7 +343,10 @@ class QualitativeAnalysisAgent:
             response = chain.invoke({
                 "ticker": state["ticker"],
                 "business_summary": state["business_summary"],
-                "messages": state["messages"]
+                "messages": state["messages"],
+                "roe": state["financial_metrics"].get("roe", "N/A"),
+                "debt_to_equity": state["financial_metrics"].get("debt_to_equity", "N/A"),
+                "pe_ratio": state["financial_metrics"].get("pe_ratio", "N/A")
             })
             
             # Extract content from response
@@ -495,9 +499,15 @@ class QualitativeAnalysisAgent:
         if not self.enabled:
             return None
         
+        # If provided news is insufficient, try to fetch Yahoo Finance news as a fallback
         if not news_data or len(news_data.strip()) < 20:
-            logger.warning(f"Insufficient news data for {ticker}")
-            return None
+            fetched_news: str = ""
+            fetched_news = get_yahoo_news_description(ticker, max_articles=15) or ""
+            if fetched_news and not fetched_news.lower().startswith("error fetching news") and not fetched_news.lower().startswith("no recent news"):
+                news_data = fetched_news
+            else:
+                logger.info(f"No news data available for {ticker}, proceeding with financial metrics only")
+                news_data = f"No recent news data available for {ticker}. Analysis will be based on financial metrics only."
         
         try:
             # Create initial state
@@ -543,12 +553,17 @@ class QualitativeAnalysisAgent:
         Returns:
             Dictionary of qualitative scores by ticker
         """
+        logger.info(f"Starting batch analysis for {len(companies_data)} companies")
+        
         if not self.enabled:
+            logger.info("Qualitative analysis disabled - returning empty results")
             return {}
         
         results = {}
         
-        for ticker, data in companies_data.items():
+        for i, (ticker, data) in enumerate(companies_data.items(), 1):
+            logger.info(f"Analyzing company {i}/{len(companies_data)}: {ticker}")
+            
             news_data = data.get('news', '')
             financial_metrics = {
                 'roe': data.get('roe'),
@@ -556,9 +571,14 @@ class QualitativeAnalysisAgent:
                 'pe_ratio': data.get('pe_ratio')
             }
             
+            logger.debug(f"News data length for {ticker}: {len(news_data)} characters")
+            
             qual_score = self.analyze_company(ticker, news_data, financial_metrics)
             if qual_score:
                 results[ticker] = qual_score
+                logger.info(f"Successfully analyzed {ticker}: score={qual_score.qual_score:.1f}")
+            else:
+                logger.warning(f"Analysis failed for {ticker} - check logs for details")
         
         logger.info(f"Completed qualitative analysis for {len(results)} companies")
         return results

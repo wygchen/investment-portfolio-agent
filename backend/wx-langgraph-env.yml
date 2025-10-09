@@ -45,5 +45,12 @@ dependencies:
       - lxml
       - html5lib
       
+      # DuckDuckGo search for market sentiment
+      - duckduckgo-search
+      - ddgs
+      
+      # Text processing for sentiment analysis
+      - textblob
+      
       # Optional: for enhanced development
       - python-json-logger
