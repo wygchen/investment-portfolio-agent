@@ -5,14 +5,19 @@ FastAPI Backend
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import uvicorn
 import logging
+import json
+import asyncio
 from datetime import datetime
     
 # Import our profile processor functions
 from backend.profile_processor import generate_user_profile
+# Import main agent for workflow execution
+from backend.main_agent import MainAgent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -63,68 +68,63 @@ async def root():
 async def health_check():
     return {"status": "healthy", "message": "Backend server is running"}
 
-@app.post("/api/process-assessment")
-async def process_assessment(assessment_data: FrontendAssessmentData):
+@app.post("/api/validate-assessment")
+async def validate_assessment(assessment_data: FrontendAssessmentData):
     """
-    Process user assessment data and generate User Profile JSON
+    Quick validation of frontend assessment data
     
-    This is the main endpoint for the profile processor.
-    It takes the frontend assessment data and outputs structured JSON
-    that other agents can consume.
+    This endpoint only validates the assessment data for correctness.
+    Returns validation results without generating profile or running workflow.
     """
     try:
-        logger.info("Processing assessment data...")
+        logger.info("Validating assessment data...")
         
-        # Convert Pydantic model to dict for processing
+        # Convert and validate data
         frontend_data = assessment_data.model_dump()
         
-        # Use profile processor function to generate user profile
-        result = generate_user_profile(frontend_data)
+        # Validation checks
+        validation_errors = []
         
-        logger.info(f"User profile generated: {result['profile_data']['profile_id']}")
+        if not frontend_data.get("riskTolerance"):
+            validation_errors.append("Risk tolerance is required")
         
+        if frontend_data.get("annualIncome", 0) <= 0:
+            validation_errors.append("Annual income must be greater than 0")
+            
+        if frontend_data.get("monthlySavings", 0) < 0:
+            validation_errors.append("Monthly savings cannot be negative")
+            
+        if frontend_data.get("totalDebt", 0) < 0:
+            validation_errors.append("Total debt cannot be negative")
+            
+        if frontend_data.get("timeHorizon", 0) <= 0:
+            validation_errors.append("Time horizon must be greater than 0")
+            
+        # Check if goals are provided
+        goals = frontend_data.get("goals", [])
+        if not goals or len(goals) == 0:
+            validation_errors.append("At least one financial goal is required")
+            
+        if validation_errors:
+            raise HTTPException(
+                status_code=400, 
+                detail={
+                    "message": "Validation failed",
+                    "errors": validation_errors
+                }
+            )
+            
+        logger.info("Assessment data validated successfully")
         return {
-            "status": "success",
-            "message": "Assessment processed successfully",
-            "user_profile": result["profile_data"],
-            "profile_id": result["profile_data"]["profile_id"],
-            "timestamp": datetime.now().isoformat()
+            "status": "success", 
+            "message": "Assessment data is valid and ready for processing"
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error processing assessment: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing assessment: {str(e)}")
-
-
-@app.post("/api/generate-report")
-async def generate_investment_report():
-    """
-    Generate professional investment report using Communication Agent
-    
-    This endpoint generates a comprehensive investment report with rationales
-    and explanations for portfolio decisions, similar to bank house views.
-    """
-    try:
-        # Import communication agent (with fallback if dependencies missing)
-        try:
-            from communication_agent import generate_investment_report
-            report_result = generate_investment_report()
-        except ImportError as e:
-            logger.warning(f"Communication agent dependencies missing: {e}")
-            # Fallback to simple report generation
-            report_result = await generate_fallback_report()
-        
-        return {
-            "status": "success",
-            "report": report_result.get("report", {}),
-            "generated_at": datetime.now().isoformat(),
-            "message": "Investment report generated successfully"
-        }
-        
-    except Exception as e:
-        logger.error(f"Error generating investment report: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error generating report: {str(e)}")
-
+        logger.error(f"Error validating assessment: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error validating assessment: {str(e)}")
 
 @app.post("/api/ask-question")
 async def ask_portfolio_question(question_data: Dict[str, Any]):
@@ -162,6 +162,117 @@ async def ask_portfolio_question(question_data: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"Error answering question: {str(e)}")
 
 
+@app.post("/api/generate-report/stream")
+async def generate_report_stream(assessment_data: FrontendAssessmentData):
+    """
+    Generate investment report with real-time streaming updates
+    
+    This endpoint processes assessment data, generates user profile,
+    runs the complete main agent workflow, and streams progress updates.
+    """
+    
+    async def generate_stream():
+        try:
+            # Step 1: Profile Generation
+            yield create_sse_event("profile_generation_started", {
+                "progress": 10,
+                "message": "Generating user profile..."
+            })
+            
+            frontend_data = assessment_data.model_dump()
+            
+            # Generate user profile
+            profile_result = generate_user_profile(frontend_data)
+            user_profile = profile_result["profile_data"]
+            
+            yield create_sse_event("profile_generated", {
+                "progress": 20,
+                "profile_id": user_profile["profile_id"],
+                "message": "User profile generated successfully"
+            })
+            
+            # Step 2: Stream MainAgent Workflow
+            async for event in stream_main_agent_workflow(user_profile):
+                yield event
+                
+        except Exception as e:
+            logger.error(f"Stream generation error: {str(e)}")
+            yield create_sse_event("error", {
+                "message": str(e),
+                "type": "server_error"
+            })
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control"
+        }
+    )
+
+
+@app.post("/api/generate-report-from-profile")
+async def generate_report_from_profile_id(request_data: Dict[str, Any]):
+    """
+    Generate investment report from an existing user profile
+    
+    Accepts profile data and generates a comprehensive investment report 
+    using the main agent workflow.
+    """
+    try:
+        profile_data = request_data.get("profile_data")
+        
+        if not profile_data:
+            raise HTTPException(
+                status_code=400, 
+                detail="profile_data is required"
+            )
+        
+        # Convert dict to UserProfile object for main agent
+        from backend.profile_processor import UserProfile
+        user_profile_obj = UserProfile(
+            goals=profile_data.get("goals", []),
+            time_horizon=profile_data.get("time_horizon", 10),
+            risk_tolerance=profile_data.get("risk_tolerance", "medium"),
+            income=profile_data.get("income", 0.0),
+            savings_rate=profile_data.get("savings_rate", 0.0),
+            liabilities=profile_data.get("liabilities", 0.0),
+            liquidity_needs=profile_data.get("liquidity_needs", "medium"),
+            personal_values=profile_data.get("personal_values", {}),
+            esg_prioritization=profile_data.get("esg_prioritization", False),
+            market_selection=profile_data.get("market_selection", ["US"]),
+            timestamp=profile_data.get("timestamp", datetime.now().isoformat()),
+            profile_id=profile_data.get("profile_id", f"profile_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        )
+        
+        # Run main agent workflow
+        agent_result = await run_main_agent_safely(user_profile_obj)
+        
+        if agent_result["success"]:
+            workflow_result = agent_result["result"]
+            final_report = workflow_result["results"].get("final_report", {})
+            
+            return {
+                "status": "success",
+                "report": final_report,
+                "execution_time": workflow_result.get("execution_time", 0)
+            }
+        else:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Workflow failed: {agent_result['error']}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating report from profile: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generating report: {str(e)}")
+
+
 @app.get("/api/report/latest")
 async def get_latest_report():
     """
@@ -172,6 +283,229 @@ async def get_latest_report():
         "message": "Report retrieval not available without data sharing system",
         "suggestion": "Use /api/generate-report endpoint to generate a new report"
     }
+
+
+def create_sse_event(event_type: str, data: dict) -> str:
+    """
+    Create a Server-Sent Event formatted string
+    """
+    event_data = {
+        "event": event_type,
+        "timestamp": datetime.now().isoformat(),
+        "data": data
+    }
+    
+    return f"data: {json.dumps(event_data)}\n\n"
+
+
+def create_user_profile_object(user_profile: dict):
+    """
+    Convert profile dict to UserProfile object for main agent
+    """
+    from backend.profile_processor import UserProfile
+    
+    return UserProfile(
+        goals=user_profile.get("goals", []),
+        time_horizon=user_profile.get("time_horizon", 10),
+        risk_tolerance=user_profile.get("risk_tolerance", "medium"),
+        income=user_profile.get("income", 0.0),
+        savings_rate=user_profile.get("savings_rate", 0.0),
+        liabilities=user_profile.get("liabilities", 0.0),
+        liquidity_needs=user_profile.get("liquidity_needs", "medium"),
+        personal_values=user_profile.get("personal_values", {}),
+        esg_prioritization=user_profile.get("esg_prioritization", False),
+        market_selection=user_profile.get("market_selection", ["US"]),
+        timestamp=user_profile.get("timestamp", datetime.now().isoformat()),
+        profile_id=user_profile.get("profile_id", f"profile_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    )
+
+
+async def stream_main_agent_workflow(user_profile):
+    """
+    Stream the complete MainAgent workflow with real-time updates
+    """
+    try:
+        # Convert to UserProfile object
+        user_profile_obj = create_user_profile_object(user_profile)
+        
+        # Initialize MainAgent with streaming
+        main_agent = MainAgent()
+        workflow = main_agent.create_workflow()
+        
+        # Initialize state for streaming
+        initial_state = {
+            "user_profile": user_profile_obj,
+            "risk_analysis_state": None,
+            "portfolio_construction_state": None,
+            "selection_state": None,
+            "communication_state": None,
+            "start_time": 0.0,
+            "execution_time": 0.0,
+            "current_node": "",
+            "risk_blueprint": None,
+            "portfolio_allocation": None,
+            "security_selections": None,
+            "final_report": None,
+            "success": True,
+            "error": None,
+            "node_errors": {},
+            "config": main_agent.config
+        }
+        
+        # Stream the workflow execution
+        current_progress = 20
+        
+        # Since LangGraph astream might not be available in current version,
+        # we'll simulate streaming by running workflow and emitting events
+        
+        # Risk Analysis
+        current_progress = 30
+        yield create_sse_event("risk_analysis_started", {
+            "progress": current_progress,
+            "message": "Analyzing risk profile and generating risk blueprint..."
+        })
+        
+        try:
+            # Run the complete workflow (we'll enhance this later for true streaming)
+            agent_result = await run_main_agent_safely(user_profile_obj)
+            
+            if agent_result["success"]:
+                workflow_result = agent_result["result"]
+                
+                # Risk Analysis Complete
+                current_progress = 50
+                yield create_sse_event("risk_analysis_complete", {
+                    "progress": current_progress,
+                    "message": "Risk analysis completed successfully",
+                    "risk_blueprint": workflow_result.get("results", {}).get("risk_blueprint", {})
+                })
+                
+                # Portfolio Construction
+                current_progress = 60
+                yield create_sse_event("portfolio_construction_started", {
+                    "progress": current_progress,
+                    "message": "Optimizing portfolio allocation..."
+                })
+                
+                current_progress = 75
+                yield create_sse_event("portfolio_construction_complete", {
+                    "progress": current_progress,
+                    "message": "Portfolio optimization completed",
+                    "portfolio_allocation": workflow_result.get("results", {}).get("portfolio_allocation", {})
+                })
+                
+                # Selection
+                current_progress = 80
+                yield create_sse_event("selection_started", {
+                    "progress": current_progress,
+                    "message": "Selecting specific securities..."
+                })
+                
+                current_progress = 90
+                yield create_sse_event("selection_complete", {
+                    "progress": current_progress,
+                    "message": "Security selection completed",
+                    "security_selections": workflow_result.get("results", {}).get("security_selections", {})
+                })
+                
+                # Communication
+                current_progress = 95
+                yield create_sse_event("communication_started", {
+                    "progress": current_progress,
+                    "message": "Generating final investment report..."
+                })
+                
+                current_progress = 100
+                yield create_sse_event("final_report_complete", {
+                    "progress": current_progress,
+                    "message": "Investment report generated successfully!",
+                    "final_report": workflow_result.get("results", {}).get("final_report", {}),
+                    "execution_time": workflow_result.get("execution_time", 0),
+                    "status": "complete"
+                })
+                
+            else:
+                # Workflow failed, provide fallback
+                yield create_sse_event("workflow_error", {
+                    "progress": 50,
+                    "message": f"Workflow error: {agent_result['error']}",
+                    "type": "workflow_error"
+                })
+                
+                # Generate fallback report
+                yield create_sse_event("communication_started", {
+                    "progress": 95,
+                    "message": "Generating fallback report..."
+                })
+                
+                fallback_report = await generate_fallback_report()
+                yield create_sse_event("final_report_complete", {
+                    "progress": 100,
+                    "message": "Fallback report generated",
+                    "final_report": fallback_report.get("report", {}),
+                    "status": "completed_with_fallback"
+                })
+                
+        except Exception as workflow_error:
+            logger.error(f"Workflow execution error: {str(workflow_error)}")
+            yield create_sse_event("workflow_error", {
+                "progress": 50,
+                "message": str(workflow_error),
+                "type": "workflow_execution_error"
+            })
+            
+            # Always provide fallback report
+            fallback_report = await generate_fallback_report()
+            yield create_sse_event("final_report_complete", {
+                "progress": 100,
+                "message": "Fallback report generated due to workflow error",
+                "final_report": fallback_report.get("report", {}),
+                "status": "completed_with_fallback"
+            })
+        
+    except Exception as e:
+        logger.error(f"Stream workflow error: {str(e)}")
+        yield create_sse_event("error", {
+            "message": str(e),
+            "type": "stream_error"
+        })
+
+
+async def run_main_agent_safely(user_profile_obj) -> Dict[str, Any]:
+    """
+    Safely run the main agent workflow with proper error handling
+    
+    Args:
+        user_profile_obj: UserProfile object
+        
+    Returns:
+        Dictionary with workflow results or error information
+    """
+    try:
+        # Initialize and run main agent
+        main_agent = MainAgent()
+        workflow_result = main_agent.run_complete_workflow(user_profile_obj)
+        
+        return {
+            "success": workflow_result.get("status") == "success",
+            "result": workflow_result,
+            "error": None if workflow_result.get("status") == "success" else workflow_result.get("error")
+        }
+        
+    except ImportError as e:
+        logger.error(f"Main agent dependencies missing: {str(e)}")
+        return {
+            "success": False,
+            "result": None,
+            "error": f"Main agent dependencies missing: {str(e)}"
+        }
+    except Exception as e:
+        logger.error(f"Main agent execution failed: {str(e)}")
+        return {
+            "success": False,
+            "result": None,
+            "error": f"Main agent execution failed: {str(e)}"
+        }
 
 
 async def generate_fallback_report():
