@@ -23,8 +23,12 @@ import {
   GraduationCap,
   Heart,
   Plane,
+  Sparkles,
+  FileText,
+  MessageSquare,
 } from "lucide-react"
 import { MarketDataWidget } from "@/components/market-data-widget"
+import { InvestmentReportComponent } from "@/components/ui/investment report"
 import {
   LineChart,
   AreaChart,
@@ -111,6 +115,37 @@ export default function DashboardPage() {
       </header>
 
       <div className="container mx-auto px-6 py-8 max-w-7xl">
+        {/* AI Communication Agent Announcement Banner */}
+        <div className="mb-8">
+          <Card className="border-2 border-primary/20 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5 shadow-lg">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-primary to-accent rounded-full">
+                    <Brain className="w-6 h-6 text-white animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <h3 className="text-lg font-semibold text-foreground">🆕 AI Communication Agent Now Available!</h3>
+                      <Badge variant="destructive" className="animate-bounce">NEW</Badge>
+                    </div>
+                    <p className="text-muted-foreground">
+                      Generate professional investment reports and get AI-powered explanations about your portfolio decisions
+                    </p>
+                  </div>
+                </div>
+                <Button 
+                  onClick={() => setSelectedTab("communication")} 
+                  className="bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 text-white shadow-lg"
+                >
+                  <Brain className="w-4 h-4 mr-2" />
+                  Try AI Reports
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
         {/* Portfolio Summary */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-6">
@@ -198,10 +233,17 @@ export default function DashboardPage() {
 
         {/* Main Dashboard Tabs */}
         <Tabs value={selectedTab} onValueChange={setSelectedTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 bg-muted/50">
+          <TabsList className="grid w-full grid-cols-5 bg-muted/50">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="allocation">Allocation</TabsTrigger>
             <TabsTrigger value="performance">Performance</TabsTrigger>
+            <TabsTrigger value="communication" className="relative">
+              <span className="flex items-center gap-2">
+                <Brain className="w-4 h-4" />
+                AI Reports
+                <Badge variant="destructive" className="text-xs px-1 py-0 h-4">NEW</Badge>
+              </span>
+            </TabsTrigger>
             <TabsTrigger value="ai-insights">AI Insights</TabsTrigger>
           </TabsList>
 
@@ -544,6 +586,39 @@ export default function DashboardPage() {
                 </ResponsiveContainer>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="communication" className="space-y-6">
+            {/* Communication Agent Section with Prominent Header */}
+            <div className="text-center space-y-4 mb-8">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-primary/20 to-accent/20 rounded-full">
+                <Brain className="w-8 h-8 text-primary animate-pulse" />
+              </div>
+              <div>
+                <h2 className="text-3xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+                  AI Communication Agent
+                </h2>
+                <p className="text-muted-foreground text-lg mt-2">
+                  Generate professional investment reports and get detailed explanations about your portfolio decisions
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2">
+                <Badge variant="default" className="bg-gradient-to-r from-primary to-accent text-white">
+                  🤖 Powered by AI
+                </Badge>
+                <Badge variant="outline" className="border-primary text-primary">
+                  Professional Reports
+                </Badge>
+                <Badge variant="outline" className="border-accent text-accent">
+                  Q&A Available
+                </Badge>
+              </div>
+            </div>
+
+            {/* Investment Report Component */}
+            <div className="bg-gradient-to-br from-card/50 via-background to-accent/5 p-6 rounded-lg border border-border/50 shadow-lg">
+              <InvestmentReportComponent />
+            </div>
           </TabsContent>
 
           <TabsContent value="ai-insights" className="space-y-6">
