@@ -62,7 +62,7 @@ export function InvestmentReportComponent() {
 
   const loadExistingReport = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/report/latest')
+      const response = await fetch('http://localhost:8003/api/report/latest')
       if (response.ok) {
         const result = await response.json()
         setReport(result.report)
@@ -77,7 +77,7 @@ export function InvestmentReportComponent() {
     setError(null)
     
     try {
-      const response = await fetch('http://localhost:8000/api/generate-report', {
+      const response = await fetch('http://localhost:8003/api/generate-report', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -108,7 +108,7 @@ export function InvestmentReportComponent() {
     setAskingQuestion(true)
     
     try {
-      const response = await fetch('http://localhost:8000/api/ask-question', {
+      const response = await fetch('http://localhost:8003/api/ask-question', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
