@@ -4,6 +4,8 @@ from ddgs import DDGS
 from langchain_ibm import WatsonxLLM
 from textblob import TextBlob
 import os
+from dataclasses import asdict
+from market_sentiment_types import MarketSentiment
 
 """
 # Debug flag: set environment variable MARKET_SENTIMENT_DEBUG=1 to print raw LLM responses
@@ -277,10 +279,24 @@ def analyze_market_sentiment(tickers):
                 # leave original value if conversion fails
                 pass
 
-    print("Result is", results)
-    return results
+    # Build dataclass instances for stronger typing / downstream use
+    dataclass_results = []
+    for r in results:
+        dataclass_results.append(
+            MarketSentiment(
+                ticker=r.get("Ticker"),
+                watsonx_sentiment=float(r.get("Watsonx Sentiment", 0.0) or 0.0),
+                news_sentiment_ddg=float(r.get("News Sentiment (DDG)", 0.0) or 0.0),
+                fear_greed_index=float(r.get("Fear/Greed Index", 0.0) or 0.0),
+                average_sentiment_score=float(r.get("Average Sentiment Score", 0.0) or 0.0),
+            )
+        )
 
+    return dataclass_results
 
+'''
+# test
 if __name__ == '__main__':
     # Example run when executed as a script
     analyze_market_sentiment(["AAPL", "TSLA", "MSFT"])
+'''
