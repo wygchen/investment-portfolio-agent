@@ -33,16 +33,26 @@ except Exception:
     equity_indices_for_tickers = None
 
 # Section 1: Define Tickers and Time Range 
-# Default tickers (used when no profile exists or parsing fails)
-DEFAULT_TICKERS = ['SPY', 'BND', 'GLD', 'QQQ', 'EWH']
-""" SPY: most popular S&P500 index
-    BND: bond index
-    GLD: largest commmodity base ETF
-    QQQ: NASDAQ ETF
-    EWH: Hong Kong ETF
-     
-    Different asset classes with low correlation with each other
-"""
+# Asset class -> representative tickers mapping. Consumers can reference individual lists
+# or use default_tickers (flattened across classes) when no profile exists.
+asset_class_tickers = {
+    'US_EQUITIES': ['VTI', 'SPY', 'IVV'],           # Total US vs S&P 500
+    'HONG_KONG_EQUITIES': ['EWH', 'FXI', 'YINN'],   # Hong Kong only ETFs
+    'BONDS': ['BND', 'AGG', 'BNDW'],                # US Bonds vs Global Bonds
+    'REITS': ['VNQ', 'SCHH', 'IYR'],                # US REITs
+    'COMMODITIES': ['DBC', 'GSG', 'PDBC'],          # Broad commodities
+    'CRYPTO': ['BTC-USD', 'GBTC', 'BITO'],          # Direct crypto vs ETFs
+}
+
+# Default tickers (flattened list across asset classes). Order preserved; duplicates removed.
+seen = set()
+default_tickers = []
+for assets in asset_class_tickers.values():
+    for t in assets:
+        if t not in seen:
+            seen.add(t)
+            default_tickers.append(t)
+
 
 
 # Try to load market selection from the latest discovery profile saved by DiscoveryAgent
@@ -52,13 +62,13 @@ def _select_tickers_from_profile(path: str):
     """Read a discovery profile JSON and return a list of tickers based on market_selection.
 
     Expected `market_selection` values in the profile: list containing any of 'US', 'HK'.
-    Returns DEFAULT_TICKERS on error or unknown selection.
+    Returns default_tickers on error or unknown selection.
     """
     try:
         import json
         if not os.path.exists(path):
             print(f"Discovery profile not found at {path}; using default tickers")
-            return DEFAULT_TICKERS
+            return default_tickers
         with open(path, 'r') as f:
             profile = json.load(f)
         market_selection = profile.get('market_selection') or profile.get('marketSelection') or []
@@ -74,13 +84,14 @@ def _select_tickers_from_profile(path: str):
             tickers.extend(['0700.HK', '0988.HK', '0939.HK', 'EWH'])
         # If user asked for other markets or list is empty, fall back to defaults
         if not tickers:
-            return DEFAULT_TICKERS
+            return default_tickers
         return tickers
     except Exception as e:
         print(f"Failed to read discovery profile ({e}); using default tickers")
-        return DEFAULT_TICKERS
+        return default_tickers
 
 
+# Resolve tickers to use for portfolio construction
 # Resolve tickers to use for portfolio construction
 tickers = _select_tickers_from_profile(shared_profile_path)
 
@@ -426,16 +437,42 @@ try:
     # full mapping of all tickers to their final weights
     weights_map_full = {t: float(w) for t, w in zip(tickers, optimal_weights)}
 
-    portfolio_result = PortfolioResult(
-        tickers=tickers,
-        weights=list(optimal_weights),
-        covariance_matrix=cov_matrix if 'cov_matrix' in globals() else None,
-        expected_return=float(optimal_portfolio_return),
-        volatility=float(optimal_portfolio_volatility),
-        sharpe_ratio=float(optimal_sharpe_ratio),
-        risk_free_rate=float(risk_free_rate),
-        weights_map=weights_map_full,
-    )
+    # Compute allocation by the predefined asset classes (asset_class_tickers)
+    try:
+        # Build reverse mapping ticker -> asset class name (first match wins)
+        ticker_to_class = {}
+        for class_name, tlist in asset_class_tickers.items():
+            for t in tlist:
+                if t not in ticker_to_class:
+                    ticker_to_class[t] = class_name
+
+        # Sum weights per class; tickers not in mapping go into 'OTHER'
+        asset_class_allocations = {cn: 0.0 for cn in asset_class_tickers.keys()}
+        asset_class_allocations['OTHER'] = 0.0
+        for t, w in weights_map_full.items():
+            cls = ticker_to_class.get(t)
+            if cls is None:
+                asset_class_allocations['OTHER'] += float(w)
+            else:
+                asset_class_allocations[cls] += float(w)
+
+        portfolio_result = PortfolioResult(
+            tickers=tickers,
+            weights=list(optimal_weights),
+            covariance_matrix=cov_matrix if 'cov_matrix' in globals() else None,
+            expected_return=float(optimal_portfolio_return),
+            volatility=float(optimal_portfolio_volatility),
+            sharpe_ratio=float(optimal_sharpe_ratio),
+            risk_free_rate=float(risk_free_rate),
+            weights_map=weights_map_full,
+            asset_class_allocations=asset_class_allocations,
+        )
+        # Print the allocation by asset class
+        print("\nAsset class allocations:")
+        for cls, alloc in asset_class_allocations.items():
+            print(f"  {cls}: {alloc:.4f}")
+    except Exception as e:
+        print("Failed to compute asset-class allocations:", e)
     '''
     # Print JSON-friendly dict of portfolio result
     print(json.dumps(portfolio_result.to_dict(), indent=2))

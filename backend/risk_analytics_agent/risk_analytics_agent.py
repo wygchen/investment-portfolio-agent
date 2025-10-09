@@ -14,7 +14,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ibm import ChatWatsonx
 
 from .base_agent import BaseAgent, AgentContext, AgentStatus
-from ..utils.financial_ratios import FinancialRatioEngine
+from .utils.financial_ratios import FinancialRatioEngine
 
 
 logger = logging.getLogger(__name__)
@@ -592,7 +592,7 @@ RISK FACTORS TO MONITOR:
 """
     
     def _create_risk_blueprint(self, risk_capacity: Dict[str, Any], risk_tolerance: Dict[str, Any],
-                             risk_requirement: Dict[str, Any], liquidity_constraints: str,
+                             risk_requirement: Dict[str, Any], liquidity_constraints: Dict[str, Any],
                              time_horizon_bands: Dict[str, str], risk_score: int,
                              volatility_target: float, financial_ratios: Dict[str, float]) -> Dict[str, Any]:
         """Create structured risk blueprint JSON."""
@@ -605,9 +605,10 @@ RISK FACTORS TO MONITOR:
         overall_risk_level = min(risk_levels, key=lambda x: risk_level_priority[x])
         
         return {
-            "risk_capacity": f"{risk_capacity['level']} - {risk_capacity['description']}",
-            "risk_tolerance": f"{risk_tolerance['level']} - {risk_tolerance['description']}",
-            "risk_requirement": f"{risk_requirement['level']} - {risk_requirement['description']}",
+            # Keep original structure for main_agent.py compatibility
+            "risk_capacity": risk_capacity,  # Keep as dict with 'level' key
+            "risk_tolerance": risk_tolerance,  # Keep as dict with 'level' key  
+            "risk_requirement": risk_requirement,  # Keep as dict with 'level' key
             "liquidity_constraints": liquidity_constraints,
             "time_horizon_bands": time_horizon_bands,
             "risk_level_summary": overall_risk_level,
@@ -617,6 +618,20 @@ RISK FACTORS TO MONITOR:
                 "savings_rate": f"{financial_ratios['savings_rate']:.1f}%",
                 "liquidity_ratio": f"{financial_ratios['liquidity_ratio']:.1f} months",
                 "debt_to_asset": f"{financial_ratios['debt_to_asset']:.1f}%"
+            },
+            # Add formatted versions for display
+            "risk_capacity_display": f"{risk_capacity['level']} - {risk_capacity['description']}",
+            "risk_tolerance_display": f"{risk_tolerance['level']} - {risk_tolerance['description']}",
+            "risk_requirement_display": f"{risk_requirement['level']} - {risk_requirement['description']}",
+            # Add sector and region data for equity selection agent
+            "equity_selection_params": {
+                "sectors": liquidity_constraints.get("sector_preferences", []) if isinstance(liquidity_constraints, dict) else [],
+                "regions": liquidity_constraints.get("region_preferences", []) if isinstance(liquidity_constraints, dict) else [],
+                "volatility_target": volatility_target,
+                "risk_score": risk_score,
+                "liquidity_score": liquidity_constraints.get("liquidity_score", 0) if isinstance(liquidity_constraints, dict) else 0,
+                "age_factor": liquidity_constraints.get("age_factor", 35) if isinstance(liquidity_constraints, dict) else 35,
+                "dependent_factor": liquidity_constraints.get("dependent_factor", 0) if isinstance(liquidity_constraints, dict) else 0
             }
         }
     
