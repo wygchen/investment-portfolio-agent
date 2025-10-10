@@ -45,7 +45,7 @@ class ValuesData(BaseModel):
     """Model for user values and preferences"""
     avoidIndustries: List[str] = []
     preferIndustries: List[str] = []
-    specificAssets: List[str] = []  # NEW: User-specified assets
+    specificAssets: str = ""  # NEW: User-specified assets
     customConstraints: str = ""
 
 class FrontendAssessmentData(BaseModel):
