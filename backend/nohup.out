@@ -1,0 +1,16 @@
+INFO:     Started server process [18142]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8003 (Press CTRL+C to quit)
+INFO:     127.0.0.1:50530 - "POST /validate-assessment HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:50533 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50539 - "POST /validate-assessment HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:50543 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50563 - "POST /api/validate-assessment HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50565 - "POST /api/generate-enhanced-report HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:50576 - "POST /api/validate-assessment HTTP/1.1" 200 OK
+ERROR:simple_main:Enhanced report generation failed: 'description'
+INFO:     127.0.0.1:50578 - "POST /api/generate-report HTTP/1.1" 200 OK
+ERROR:simple_main:Enhanced report generation failed: 'description'
+INFO:     127.0.0.1:50591 - "POST /api/generate-report HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50598 - "POST /api/generate-report HTTP/1.1" 200 OK

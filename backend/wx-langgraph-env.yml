@@ -1,0 +1,49 @@
+name: wx-langgraph-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - ipykernel
+  - jupyterlab
+  - ipython
+  - pydantic>=2
+  - typing_extensions
+  - pip:
+      # AI/ML dependencies
+      - ibm-watsonx-ai
+      - langchain-core
+      - langchain-ibm
+      - langgraph
+      
+      # FastAPI and web server dependencies
+      - fastapi
+      - uvicorn[standard]
+      - python-multipart
+      
+      # Testing dependencies
+      - pytest
+      - pytest-asyncio
+      - httpx
+      
+      # Environment and configuration
+      - python-dotenv
+      
+      # Data processing and utilities
+      - pandas
+      - numpy
+      - scipy
+      
+      # Financial data and analysis packages
+      - yfinance
+      - pytickersymbols
+      - yfinance-cache
+      
+      # Web scraping and HTML parsing for Wikipedia data
+      - requests
+      - lxml
+      - html5lib
+      
+      # Optional: for enhanced development
+      - python-json-logger
