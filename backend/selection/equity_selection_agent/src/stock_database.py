@@ -36,7 +36,7 @@ import os
 from pathlib import Path
 import yfinance as yfc
 
-from stock_universe import TickerManager, StockDataFetcher
+from .stock_universe import TickerManager, StockDataFetcher
 
 logger = logging.getLogger(__name__)
 

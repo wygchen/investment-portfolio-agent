@@ -20,7 +20,7 @@ import os
 import argparse
 import logging
 
-from stock_database import StockDatabase
+from .stock_database import StockDatabase
 
 # Set up logging
 logging.basicConfig(

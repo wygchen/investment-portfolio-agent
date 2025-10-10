@@ -16,8 +16,8 @@ from typing import Dict, List, Optional, Tuple, Any, Union
 import json
 from dataclasses import dataclass
 
-from config import Config
-from qualitative_agent import QualitativeAnalysisAgent
+from .config import Config
+from .qualitative_agent import QualitativeAnalysisAgent
 
 # Set up logging
 logger = logging.getLogger(__name__)

@@ -13,7 +13,7 @@ import pandas as pd
 import logging
 from typing import Optional, Tuple, List
 
-from stock_database import StockDatabase
+from .stock_database import StockDatabase
 
 # Set up logging
 logger = logging.getLogger(__name__)

@@ -19,7 +19,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 
-from config import Config
+from .config import Config
 
 import sys
 import os
