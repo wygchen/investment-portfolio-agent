@@ -67,7 +67,52 @@ uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ## Project Structure
-TODO: fill project structure
+```text
+backend/
+├─ main.py                          # FastAPI app entrypoint
+├─ main_agent.py                    # Orchestrates multi-agent workflow
+├─ communication_agent.py           # Messaging/notifications across agents
+├─ profile_processor_agent.py       # Parses and validates client profiles
+├─ services/
+│  └─ watsonx_service.py            # IBM watsonx SDK wrapper
+├─ selection/
+│  ├─ selection_agent.py
+│  ├─ integration_example.py
+│  ├─ test_selection_agent.py
+│  ├─ test_selection_compatibility.py
+│  └─ equity_selection_agent/
+│     ├─ src/                      # Data, feature, ranking, selector logic
+│     ├─ data/                     # SQLite DB and artifacts
+│     ├─ logs/                     # Data collection and ESA logs
+│     └─ README.md
+├─ risk_analytics_agent/
+│  ├─ agent_coordinator.py
+│  ├─ base_agent.py
+│  ├─ risk_analytics_agent.py
+│  └─ utils/
+│     └─ financial_ratios.py
+├─ portfolio_construction_and_market_sentiment/
+│  ├─ portfolio_construction.py
+│  ├─ market_sentiment.py
+│  ├─ market_sentiment_types.py
+│  └─ portfolio_types.py
+├─ tests/                           # Backend test suite
+│  ├─ test_api.py
+│  ├─ test_main.py
+│  ├─ test_risk_agent.py
+│  ├─ test_ticker_llm.py
+│  ├─ test_equity_selection_agent.py
+│  ├─ test_financial_ratios.py
+│  └─ test_financial_ratios_integration.py
+├─ STREAMING_API_GUIDE.md
+├─ test_streaming_api.py
+├─ test_streaming_frontend.html
+├─ watsonx_utils.py
+├─ requirements.txt
+├─ wx-langgraph-env.yml
+├─ env.template
+└─ README.md
+```
 
 ## 6) Run the notebook
 ```bash
