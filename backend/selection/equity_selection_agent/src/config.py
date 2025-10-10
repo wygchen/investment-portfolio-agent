@@ -108,7 +108,7 @@ class OutputConfig:
     """Configuration for agent output and reporting"""
     
     # Target number of selected stocks for shortlist
-    target_stock_count: int = 25
+    target_stock_count: int = 3
     
     # Logging configuration
     log_directory: str = "../logs"

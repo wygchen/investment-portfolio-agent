@@ -24,13 +24,13 @@ from typing import List, Optional, Dict, Any, TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 
-from config import Config, load_config_from_env
-from data_access import ensure_data_available, get_universe, get_price_data, get_fundamental_data
-from feature_engine import FundamentalCalculator, TechnicalAnalyzer, calculate_composite_features
-from selector_logic import EquityScreener
-from ranking_engine import RankingEngine
+from .config import Config, load_config_from_env
+from .data_access import ensure_data_available, get_universe, get_price_data, get_fundamental_data
+from .feature_engine import FundamentalCalculator, TechnicalAnalyzer, calculate_composite_features
+from .selector_logic import EquityScreener
+from .ranking_engine import RankingEngine
 
-
+# TODO: Add tackling for avoid industries
 # State definition for the workflow
 class EquitySelectionAgentState(TypedDict):
     """State object that flows through the workflow nodes"""
@@ -348,11 +348,11 @@ def ranking_selection_node(state: EquitySelectionAgentState) -> EquitySelectionA
         logger.info(f"Final selection: {len(final_selections)} stocks")
         logger.info(f"Success rate: {len(final_selections)/initial_universe_size*100:.1f}%")
         
-        # Top 5 selections preview
+        # Top 3 selections preview
         if hasattr(final_selections, 'empty') and not final_selections.empty:
-            logger.info("\nTOP 5 SELECTIONS:")
+            logger.info("\nTOP 3 SELECTIONS:")
             logger.info("-" * 40)
-            for i, (_, row) in enumerate(final_selections.head(5).iterrows(), 1):
+            for i, (_, row) in enumerate(final_selections.head(3).iterrows(), 1):
                 score = row.get('final_score', 0)
                 ticker = row.get('ticker', 'Unknown')
                 sector = row.get('sector', 'Unknown')

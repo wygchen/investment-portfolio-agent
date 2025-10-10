@@ -14,7 +14,7 @@ import numpy as np
 import logging
 from typing import Dict, List, Optional, Tuple, Any
 
-from config import Config
+from .config import Config
 
 # Set up logging
 logger = logging.getLogger(__name__)

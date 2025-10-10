@@ -13,9 +13,9 @@ import logging
 import json
 import asyncio
 from datetime import datetime
-    
+
 # Import our profile processor functions
-from profile_processor import generate_user_profile
+from profile_processor_agent import generate_user_profile
 # Import main agent for workflow execution
 from main_agent import MainAgent
 

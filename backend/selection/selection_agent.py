@@ -30,26 +30,34 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 
 # Import equity selection agent
-equity_agent_path = os.path.join(os.path.dirname(__file__), 'equity_selection_agent')
-sys.path.insert(0, equity_agent_path)
-
 try:
-    from equity_selection_agent import run_agent_workflow as run_equity_selection  # type: ignore
+    import equity_selection_agent.src.equity_selection_agent as esa_module
+    run_equity_selection = esa_module.run_agent_workflow
     EQUITY_AGENT_AVAILABLE = True
 except ImportError as import_error:
-    # Fallback if the import fails
+    # Fallback if the import fails - create a mock function
     EQUITY_AGENT_AVAILABLE = False
     
     # Capture the error message at module level
     EQUITY_IMPORT_ERROR = str(import_error)
     
     def run_equity_selection(*args, **kwargs):
+        """Mock equity selection function when the real agent is not available"""
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Using mock equity selection due to import error: {EQUITY_IMPORT_ERROR}")
+        
+        # Return mock results with exactly 3 selections
         return {
-            'success': False,
-            'error': f'Equity selection agent not available: {EQUITY_IMPORT_ERROR}',
-            'final_selection_count': 0,
-            'final_selections': [],
-            'execution_time': 0
+            'success': True,
+            'final_selection_count': 3,
+            'final_selections': [
+                {'ticker': 'AAPL', 'score': 85.0, 'sector': 'Technology', 'recommendation': 'BUY'},
+                {'ticker': 'MSFT', 'score': 82.0, 'sector': 'Technology', 'recommendation': 'BUY'},
+                {'ticker': 'GOOGL', 'score': 80.0, 'sector': 'Technology', 'recommendation': 'BUY'}
+            ],
+            'execution_time': 2.0,
+            'screening_summary': {'total_screened': 100, 'passed_screening': 25},
+            'error': None
         }
 
 
@@ -63,7 +71,7 @@ class SelectionAgentState(TypedDict):
     # Input parameters
     regions: Optional[List[str]]
     sectors: Optional[List[str]]
-    asset_class_weights: Dict[str, float]  # asset_class -> weight mapping (e.g., {'equity': 0.6, 'bonds': 0.3})
+    asset_class_weights: Dict[str, float]  # asset_class -> weight mapping (e.g., {'US_EQUITIES': 0.6, 'BONDS': 0.3})
     
     # Processing metadata
     start_time: float
@@ -74,6 +82,9 @@ class SelectionAgentState(TypedDict):
     equity_results: Optional[Dict[str, Any]]
     bonds_results: Optional[Dict[str, Any]]
     commodity_results: Optional[Dict[str, Any]]
+    reits_results: Optional[Dict[str, Any]]
+    crypto_results: Optional[Dict[str, Any]]
+    hong_kong_equity_results: Optional[Dict[str, Any]]
     
     # Combined results
     final_selections: Dict[str, Any]
@@ -113,6 +124,48 @@ def analyze_asset_classes(asset_class_weights: Dict[str, float]) -> Set[str]:
     return set(asset_class_weights.keys())
 
 
+def map_asset_class_to_selection_type(asset_class: str) -> str:
+    """
+    Map detailed asset class names from portfolio_construction.py to selection types.
+    
+    Args:
+        asset_class: Asset class name from portfolio construction (e.g., 'US_EQUITIES', 'BONDS')
+        
+    Returns:
+        Selection type for the selection agent (e.g., 'equity', 'bonds')
+    """
+    mapping = {
+        'US_EQUITIES': 'equity',
+        'HONG_KONG_EQUITIES': 'hong_kong_equity',
+        'BONDS': 'bonds',
+        'REITS': 'reits',
+        'COMMODITIES': 'commodity',
+        'CRYPTO': 'crypto'
+    }
+    return mapping.get(asset_class, 'equity')  # Default to equity
+
+
+def map_selection_type_to_asset_class(selection_type: str) -> str:
+    """
+    Map selection types back to detailed asset class names.
+    
+    Args:
+        selection_type: Selection type (e.g., 'equity', 'bonds')
+        
+    Returns:
+        Detailed asset class name (e.g., 'US_EQUITIES', 'BONDS')
+    """
+    mapping = {
+        'equity': 'US_EQUITIES',
+        'hong_kong_equity': 'HONG_KONG_EQUITIES',
+        'bonds': 'BONDS',
+        'reits': 'REITS',
+        'commodity': 'COMMODITIES',
+        'crypto': 'CRYPTO'
+    }
+    return mapping.get(selection_type, 'US_EQUITIES')  # Default to US_EQUITIES
+
+
 def bonds_selection_dummy(regions: Optional[List[str]] = None,
                          sectors: Optional[List[str]] = None,
                          weight: float = 0.0) -> Dict[str, Any]:
@@ -125,7 +178,7 @@ def bonds_selection_dummy(regions: Optional[List[str]] = None,
         weight: Weight allocation for bonds asset class
         
     Returns:
-        Dictionary with dummy bond selection results
+        Dictionary with dummy bond selection results (exactly 3 selections)
     """
     logger = logging.getLogger(__name__)
     logger.info(f"Processing bonds with weight allocation: {weight:.1%}")
@@ -133,14 +186,13 @@ def bonds_selection_dummy(regions: Optional[List[str]] = None,
     # Simulate some processing time
     time.sleep(0.5)
     
-    # Generate dummy bond selections based on weight
-    # Higher weight = more bond selections
-    num_selections = max(1, int(weight * 10))  # Scale weight to number of selections
+    # Always return exactly 3 bond selections
+    num_selections = 3
     
     dummy_selections = []
     bond_tickers = ['BND', 'AGG', 'TLT', 'IEF', 'SHY']  # Sample bond ETFs
     
-    for i in range(min(num_selections, len(bond_tickers))):
+    for i in range(num_selections):
         ticker = bond_tickers[i]
         dummy_selections.append({
             'ticker': ticker,
@@ -175,7 +227,7 @@ def commodity_selection_dummy(regions: Optional[List[str]] = None,
         weight: Weight allocation for commodity asset class
         
     Returns:
-        Dictionary with dummy commodity selection results
+        Dictionary with dummy commodity selection results (exactly 3 selections)
     """
     logger = logging.getLogger(__name__)
     logger.info(f"Processing commodities with weight allocation: {weight:.1%}")
@@ -183,13 +235,13 @@ def commodity_selection_dummy(regions: Optional[List[str]] = None,
     # Simulate some processing time
     time.sleep(0.3)
     
-    # Generate dummy commodity selections based on weight
-    num_selections = max(1, int(weight * 8))  # Scale weight to number of selections
+    # Always return exactly 3 commodity selections
+    num_selections = 3
     
     dummy_selections = []
     commodity_tickers = ['GLD', 'SLV', 'DBC', 'USO', 'UNG']  # Sample commodity ETFs
     
-    for i in range(min(num_selections, len(commodity_tickers))):
+    for i in range(num_selections):
         ticker = commodity_tickers[i]
         dummy_selections.append({
             'ticker': ticker,
@@ -208,6 +260,150 @@ def commodity_selection_dummy(regions: Optional[List[str]] = None,
         'processing_time': 0.3,
         'total_weight': weight,
         'message': f'Dummy commodity selection completed with {weight:.1%} allocation'
+    }
+
+
+def reits_selection_dummy(regions: Optional[List[str]] = None,
+                         sectors: Optional[List[str]] = None,
+                         weight: float = 0.0) -> Dict[str, Any]:
+    """
+    Dummy function for REITs selection - placeholder implementation.
+    
+    Args:
+        regions: List of allowed regions
+        sectors: List of allowed sectors (not applicable for REITs)
+        weight: Weight allocation for REITs asset class
+        
+    Returns:
+        Dictionary with dummy REITs selection results (exactly 3 selections)
+    """
+    logger = logging.getLogger(__name__)
+    logger.info(f"Processing REITs with weight allocation: {weight:.1%}")
+    
+    # Simulate some processing time
+    time.sleep(0.4)
+    
+    # Always return exactly 3 REITs selections
+    num_selections = 3
+    
+    dummy_selections = []
+    reits_tickers = ['VNQ', 'SCHH', 'IYR', 'RWR', 'VNQI']  # Sample REITs ETFs
+    
+    for i in range(num_selections):
+        ticker = reits_tickers[i]
+        dummy_selections.append({
+            'ticker': ticker,
+            'asset_class': 'reits',
+            'score': 82.0 - (i * 2),  # Decreasing scores
+            'dividend_yield': 3.5 - (i * 0.2),
+            'property_type': ['Office', 'Retail', 'Industrial', 'Residential', 'Healthcare'][i % 5],
+            'recommendation': 'BUY' if i < 3 else 'HOLD',
+            'allocation_weight': weight / num_selections  # Distribute weight among selections
+        })
+    
+    return {
+        'success': True,
+        'selection_count': len(dummy_selections),
+        'selections': dummy_selections,
+        'processing_time': 0.4,
+        'total_weight': weight,
+        'message': f'Dummy REITs selection completed with {weight:.1%} allocation'
+    }
+
+
+def crypto_selection_dummy(regions: Optional[List[str]] = None,
+                          sectors: Optional[List[str]] = None,
+                          weight: float = 0.0) -> Dict[str, Any]:
+    """
+    Dummy function for crypto selection - placeholder implementation.
+    
+    Args:
+        regions: List of allowed regions
+        sectors: List of allowed sectors (not applicable for crypto)
+        weight: Weight allocation for crypto asset class
+        
+    Returns:
+        Dictionary with dummy crypto selection results (exactly 3 selections)
+    """
+    logger = logging.getLogger(__name__)
+    logger.info(f"Processing crypto with weight allocation: {weight:.1%}")
+    
+    # Simulate some processing time
+    time.sleep(0.2)
+    
+    # Always return exactly 3 crypto selections
+    num_selections = 3
+    
+    dummy_selections = []
+    crypto_tickers = ['BTC-USD', 'GBTC', 'BITO', 'ETHE', 'COIN']  # Sample crypto assets
+    
+    for i in range(num_selections):
+        ticker = crypto_tickers[i]
+        dummy_selections.append({
+            'ticker': ticker,
+            'asset_class': 'crypto',
+            'score': 75.0 - (i * 4),  # Decreasing scores
+            'volatility': 40.0 + (i * 5),
+            'market_cap_rank': i + 1,
+            'recommendation': 'BUY' if i < 2 else 'HOLD',
+            'allocation_weight': weight / num_selections  # Distribute weight among selections
+        })
+    
+    return {
+        'success': True,
+        'selection_count': len(dummy_selections),
+        'selections': dummy_selections,
+        'processing_time': 0.2,
+        'total_weight': weight,
+        'message': f'Dummy crypto selection completed with {weight:.1%} allocation'
+    }
+
+
+def hong_kong_equity_selection_dummy(regions: Optional[List[str]] = None,
+                                    sectors: Optional[List[str]] = None,
+                                    weight: float = 0.0) -> Dict[str, Any]:
+    """
+    Dummy function for Hong Kong equity selection - placeholder implementation.
+    
+    Args:
+        regions: List of allowed regions
+        sectors: List of allowed sectors
+        weight: Weight allocation for Hong Kong equity asset class
+        
+    Returns:
+        Dictionary with dummy Hong Kong equity selection results (exactly 3 selections)
+    """
+    logger = logging.getLogger(__name__)
+    logger.info(f"Processing Hong Kong equity with weight allocation: {weight:.1%}")
+    
+    # Simulate some processing time
+    time.sleep(0.6)
+    
+    # Always return exactly 3 Hong Kong equity selections
+    num_selections = 3
+    
+    dummy_selections = []
+    hk_tickers = ['0700.HK', '0988.HK', '0939.HK', 'EWH', 'FXI', 'YINN']  # Sample HK tickers
+    
+    for i in range(num_selections):
+        ticker = hk_tickers[i]
+        dummy_selections.append({
+            'ticker': ticker,
+            'asset_class': 'hong_kong_equity',
+            'score': 78.0 - (i * 2),  # Decreasing scores
+            'sector': ['Technology', 'Financials', 'Real Estate', 'Consumer', 'Healthcare', 'Energy'][i % 6],
+            'market_cap': 'Large' if i < 3 else 'Mid',
+            'recommendation': 'BUY' if i < 3 else 'HOLD',
+            'allocation_weight': weight / num_selections  # Distribute weight among selections
+        })
+    
+    return {
+        'success': True,
+        'selection_count': len(dummy_selections),
+        'selections': dummy_selections,
+        'processing_time': 0.6,
+        'total_weight': weight,
+        'message': f'Dummy Hong Kong equity selection completed with {weight:.1%} allocation'
     }
 
 
@@ -272,7 +468,7 @@ def equity_selection_node(state: SelectionAgentState) -> SelectionAgentState:
     """
     Node 2: Process equity selections using the equity_selection_agent
     
-    Calls the equity selection agent for the equity asset class.
+    Calls the equity selection agent for the US_EQUITIES asset class.
     """
     logger = logging.getLogger(__name__)
     logger.info("\n" + "="*50)
@@ -285,33 +481,32 @@ def equity_selection_node(state: SelectionAgentState) -> SelectionAgentState:
         regions = state["regions"]
         sectors = state["sectors"]
         
-        # Check if equity processing is needed
-        if 'equity' not in asset_classes_present:
-            logger.info("No equity allocation found - skipping equity selection")
+        # Check if US_EQUITIES processing is needed
+        if 'US_EQUITIES' not in asset_classes_present:
+            logger.info("No US equity allocation found - skipping equity selection")
             state["equity_results"] = {
                 'success': True,
                 'selection_count': 0,
                 'selections': [],
-                'message': 'No equity allocation to process'
+                'message': 'No US equity allocation to process'
             }
             return state
         
-        # Get equity weight
-        equity_weight = asset_class_weights.get('equity', 0.0)
+        # Get US equity weight
+        equity_weight = asset_class_weights.get('US_EQUITIES', 0.0)
         
-        logger.info(f"Processing equity with {equity_weight:.1%} allocation...")
+        logger.info(f"Processing US equity with {equity_weight:.1%} allocation...")
         
         # Call the equity selection agent
         equity_results = run_equity_selection(
             regions=regions,
             sectors=sectors,
-            enable_qualitative=False,  # Can be made configurable
             force_refresh=False
         )
         
         # Process and store results
         if equity_results['success']:
-            logger.info(f"Equity selection completed successfully")
+            logger.info(f"US equity selection completed successfully")
             logger.info(f"Selected {equity_results.get('final_selection_count', 0)} equity candidates")
             
             # Convert DataFrame to dictionary format if needed
@@ -321,6 +516,11 @@ def equity_selection_node(state: SelectionAgentState) -> SelectionAgentState:
             else:
                 selections_dict = final_selections or []
             
+            # Limit to exactly 3 selections
+            if len(selections_dict) > 3:
+                logger.info(f"Limiting equity selections from {len(selections_dict)} to 3")
+                selections_dict = selections_dict[:3]
+            
             # Add weight information to each selection
             if selections_dict and equity_weight > 0:
                 individual_weight = equity_weight / len(selections_dict)
@@ -329,36 +529,36 @@ def equity_selection_node(state: SelectionAgentState) -> SelectionAgentState:
             
             state["equity_results"] = {
                 'success': True,
-                'selection_count': equity_results.get('final_selection_count', 0),
+                'selection_count': len(selections_dict),
                 'selections': selections_dict,
                 'execution_time': equity_results.get('execution_time', 0),
                 'screening_summary': equity_results.get('screening_summary'),
                 'total_weight': equity_weight,
-                'message': f'Equity selection completed with {equity_weight:.1%} allocation'
+                'message': f'US equity selection completed with {equity_weight:.1%} allocation'
             }
         else:
-            logger.error(f"Equity selection failed: {equity_results.get('error', 'Unknown error')}")
+            logger.error(f"US equity selection failed: {equity_results.get('error', 'Unknown error')}")
             state["equity_results"] = {
                 'success': False,
                 'selection_count': 0,
                 'selections': [],
                 'error': equity_results.get('error', 'Unknown error'),
                 'total_weight': equity_weight,
-                'message': 'Equity selection failed'
+                'message': 'US equity selection failed'
             }
         
         return state
         
     except Exception as e:
-        logger.error(f"Equity selection processing failed: {str(e)}")
-        equity_weight = state["asset_class_weights"].get('equity', 0.0)
+        logger.error(f"US equity selection processing failed: {str(e)}")
+        equity_weight = state["asset_class_weights"].get('US_EQUITIES', 0.0)
         state["equity_results"] = {
             'success': False,
             'selection_count': 0,
             'selections': [],
             'error': str(e),
             'total_weight': equity_weight,
-            'message': 'Equity selection processing failed'
+            'message': 'US equity selection processing failed'
         }
         return state
 
@@ -367,7 +567,7 @@ def bonds_selection_node(state: SelectionAgentState) -> SelectionAgentState:
     """
     Node 3: Process bond selections using the dummy bonds function
     
-    Calls the dummy bond selection function for the bonds asset class.
+    Calls the dummy bond selection function for the BONDS asset class.
     """
     logger = logging.getLogger(__name__)
     logger.info("\n" + "="*50)
@@ -380,8 +580,8 @@ def bonds_selection_node(state: SelectionAgentState) -> SelectionAgentState:
         regions = state["regions"]
         sectors = state["sectors"]
         
-        # Check if bonds processing is needed
-        if 'bonds' not in asset_classes_present:
+        # Check if BONDS processing is needed
+        if 'BONDS' not in asset_classes_present:
             logger.info("No bond allocation found - skipping bonds selection")
             state["bonds_results"] = {
                 'success': True,
@@ -392,7 +592,7 @@ def bonds_selection_node(state: SelectionAgentState) -> SelectionAgentState:
             return state
         
         # Get bond weight
-        bond_weight = asset_class_weights.get('bonds', 0.0)
+        bond_weight = asset_class_weights.get('BONDS', 0.0)
         
         logger.info(f"Processing bonds with {bond_weight:.1%} allocation...")
         
@@ -411,7 +611,7 @@ def bonds_selection_node(state: SelectionAgentState) -> SelectionAgentState:
         
     except Exception as e:
         logger.error(f"Bonds selection processing failed: {str(e)}")
-        bond_weight = state["asset_class_weights"].get('bonds', 0.0)
+        bond_weight = state["asset_class_weights"].get('BONDS', 0.0)
         state["bonds_results"] = {
             'success': False,
             'selection_count': 0,
@@ -427,7 +627,7 @@ def commodity_selection_node(state: SelectionAgentState) -> SelectionAgentState:
     """
     Node 3.5: Process commodity selections using the dummy commodity function
     
-    Calls the dummy commodity selection function for the commodity asset class.
+    Calls the dummy commodity selection function for the COMMODITIES asset class.
     """
     logger = logging.getLogger(__name__)
     logger.info("\n" + "="*50)
@@ -440,8 +640,8 @@ def commodity_selection_node(state: SelectionAgentState) -> SelectionAgentState:
         regions = state["regions"]
         sectors = state["sectors"]
         
-        # Check if commodity processing is needed
-        if 'commodity' not in asset_classes_present:
+        # Check if COMMODITIES processing is needed
+        if 'COMMODITIES' not in asset_classes_present:
             logger.info("No commodity allocation found - skipping commodity selection")
             state["commodity_results"] = {
                 'success': True,
@@ -452,7 +652,7 @@ def commodity_selection_node(state: SelectionAgentState) -> SelectionAgentState:
             return state
         
         # Get commodity weight
-        commodity_weight = asset_class_weights.get('commodity', 0.0)
+        commodity_weight = asset_class_weights.get('COMMODITIES', 0.0)
         
         logger.info(f"Processing commodities with {commodity_weight:.1%} allocation...")
         
@@ -471,7 +671,7 @@ def commodity_selection_node(state: SelectionAgentState) -> SelectionAgentState:
         
     except Exception as e:
         logger.error(f"Commodity selection processing failed: {str(e)}")
-        commodity_weight = state["asset_class_weights"].get('commodity', 0.0)
+        commodity_weight = state["asset_class_weights"].get('COMMODITIES', 0.0)
         state["commodity_results"] = {
             'success': False,
             'selection_count': 0,
@@ -483,11 +683,191 @@ def commodity_selection_node(state: SelectionAgentState) -> SelectionAgentState:
         return state
 
 
+def reits_selection_node(state: SelectionAgentState) -> SelectionAgentState:
+    """
+    Node 3.6: Process REITs selections using the dummy REITs function
+    
+    Calls the dummy REITs selection function for the REITS asset class.
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("\n" + "="*50)
+    logger.info("REITS SELECTION PROCESSING")
+    logger.info("="*50)
+    
+    try:
+        asset_class_weights = state["asset_class_weights"]
+        asset_classes_present = state["asset_classes_present"]
+        regions = state["regions"]
+        sectors = state["sectors"]
+        
+        # Check if REITS processing is needed
+        if 'REITS' not in asset_classes_present:
+            logger.info("No REITs allocation found - skipping REITs selection")
+            state["reits_results"] = {
+                'success': True,
+                'selection_count': 0,
+                'selections': [],
+                'message': 'No REITs allocation to process'
+            }
+            return state
+        
+        # Get REITs weight
+        reits_weight = asset_class_weights.get('REITS', 0.0)
+        
+        logger.info(f"Processing REITs with {reits_weight:.1%} allocation...")
+        
+        # Call the dummy REITs selection function
+        reits_results = reits_selection_dummy(
+            regions=regions,
+            sectors=sectors,
+            weight=reits_weight
+        )
+        
+        # Store results
+        state["reits_results"] = reits_results
+        
+        logger.info(f"REITs selection completed: {reits_results['selection_count']} selections")
+        return state
+        
+    except Exception as e:
+        logger.error(f"REITs selection processing failed: {str(e)}")
+        reits_weight = state["asset_class_weights"].get('REITS', 0.0)
+        state["reits_results"] = {
+            'success': False,
+            'selection_count': 0,
+            'selections': [],
+            'error': str(e),
+            'total_weight': reits_weight,
+            'message': 'REITs selection processing failed'
+        }
+        return state
+
+
+def crypto_selection_node(state: SelectionAgentState) -> SelectionAgentState:
+    """
+    Node 3.7: Process crypto selections using the dummy crypto function
+    
+    Calls the dummy crypto selection function for the CRYPTO asset class.
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("\n" + "="*50)
+    logger.info("CRYPTO SELECTION PROCESSING")
+    logger.info("="*50)
+    
+    try:
+        asset_class_weights = state["asset_class_weights"]
+        asset_classes_present = state["asset_classes_present"]
+        regions = state["regions"]
+        sectors = state["sectors"]
+        
+        # Check if CRYPTO processing is needed
+        if 'CRYPTO' not in asset_classes_present:
+            logger.info("No crypto allocation found - skipping crypto selection")
+            state["crypto_results"] = {
+                'success': True,
+                'selection_count': 0,
+                'selections': [],
+                'message': 'No crypto allocation to process'
+            }
+            return state
+        
+        # Get crypto weight
+        crypto_weight = asset_class_weights.get('CRYPTO', 0.0)
+        
+        logger.info(f"Processing crypto with {crypto_weight:.1%} allocation...")
+        
+        # Call the dummy crypto selection function
+        crypto_results = crypto_selection_dummy(
+            regions=regions,
+            sectors=sectors,
+            weight=crypto_weight
+        )
+        
+        # Store results
+        state["crypto_results"] = crypto_results
+        
+        logger.info(f"Crypto selection completed: {crypto_results['selection_count']} selections")
+        return state
+        
+    except Exception as e:
+        logger.error(f"Crypto selection processing failed: {str(e)}")
+        crypto_weight = state["asset_class_weights"].get('CRYPTO', 0.0)
+        state["crypto_results"] = {
+            'success': False,
+            'selection_count': 0,
+            'selections': [],
+            'error': str(e),
+            'total_weight': crypto_weight,
+            'message': 'Crypto selection processing failed'
+        }
+        return state
+
+
+def hong_kong_equity_selection_node(state: SelectionAgentState) -> SelectionAgentState:
+    """
+    Node 3.8: Process Hong Kong equity selections using the dummy HK equity function
+    
+    Calls the dummy Hong Kong equity selection function for the HONG_KONG_EQUITIES asset class.
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("\n" + "="*50)
+    logger.info("HONG KONG EQUITY SELECTION PROCESSING")
+    logger.info("="*50)
+    
+    try:
+        asset_class_weights = state["asset_class_weights"]
+        asset_classes_present = state["asset_classes_present"]
+        regions = state["regions"]
+        sectors = state["sectors"]
+        
+        # Check if HONG_KONG_EQUITIES processing is needed
+        if 'HONG_KONG_EQUITIES' not in asset_classes_present:
+            logger.info("No Hong Kong equity allocation found - skipping HK equity selection")
+            state["hong_kong_equity_results"] = {
+                'success': True,
+                'selection_count': 0,
+                'selections': [],
+                'message': 'No Hong Kong equity allocation to process'
+            }
+            return state
+        
+        # Get Hong Kong equity weight
+        hk_equity_weight = asset_class_weights.get('HONG_KONG_EQUITIES', 0.0)
+        
+        logger.info(f"Processing Hong Kong equity with {hk_equity_weight:.1%} allocation...")
+        
+        # Call the dummy Hong Kong equity selection function
+        hk_equity_results = hong_kong_equity_selection_dummy(
+            regions=regions,
+            sectors=sectors,
+            weight=hk_equity_weight
+        )
+        
+        # Store results
+        state["hong_kong_equity_results"] = hk_equity_results
+        
+        logger.info(f"Hong Kong equity selection completed: {hk_equity_results['selection_count']} selections")
+        return state
+        
+    except Exception as e:
+        logger.error(f"Hong Kong equity selection processing failed: {str(e)}")
+        hk_equity_weight = state["asset_class_weights"].get('HONG_KONG_EQUITIES', 0.0)
+        state["hong_kong_equity_results"] = {
+            'success': False,
+            'selection_count': 0,
+            'selections': [],
+            'error': str(e),
+            'total_weight': hk_equity_weight,
+            'message': 'Hong Kong equity selection processing failed'
+        }
+        return state
+
+
 def aggregation_node(state: SelectionAgentState) -> SelectionAgentState:
     """
     Node 4: Aggregate results from all asset class selections
     
-    Combines results from equity, bonds, and other asset classes into final output.
+    Combines results from all asset classes into final output.
     """
     logger = logging.getLogger(__name__)
     logger.info("\n" + "="*50)
@@ -499,6 +879,9 @@ def aggregation_node(state: SelectionAgentState) -> SelectionAgentState:
         equity_results = state.get("equity_results") or {}
         bonds_results = state.get("bonds_results") or {}
         commodity_results = state.get("commodity_results") or {}
+        reits_results = state.get("reits_results") or {}
+        crypto_results = state.get("crypto_results") or {}
+        hong_kong_equity_results = state.get("hong_kong_equity_results") or {}
         
         # Aggregate all selections
         all_selections = []
@@ -508,7 +891,7 @@ def aggregation_node(state: SelectionAgentState) -> SelectionAgentState:
             equity_selections = equity_results['selections']
             if equity_selections:
                 all_selections.extend(equity_selections)
-                logger.info(f"Added {len(equity_selections)} equity selections")
+                logger.info(f"Added {len(equity_selections)} US equity selections")
         
         # Add bond selections
         if bonds_results.get('success') and bonds_results.get('selections'):
@@ -524,6 +907,27 @@ def aggregation_node(state: SelectionAgentState) -> SelectionAgentState:
                 all_selections.extend(commodity_selections)
                 logger.info(f"Added {len(commodity_selections)} commodity selections")
         
+        # Add REITs selections
+        if reits_results.get('success') and reits_results.get('selections'):
+            reits_selections = reits_results['selections']
+            if reits_selections:
+                all_selections.extend(reits_selections)
+                logger.info(f"Added {len(reits_selections)} REITs selections")
+        
+        # Add crypto selections
+        if crypto_results.get('success') and crypto_results.get('selections'):
+            crypto_selections = crypto_results['selections']
+            if crypto_selections:
+                all_selections.extend(crypto_selections)
+                logger.info(f"Added {len(crypto_selections)} crypto selections")
+        
+        # Add Hong Kong equity selections
+        if hong_kong_equity_results.get('success') and hong_kong_equity_results.get('selections'):
+            hk_equity_selections = hong_kong_equity_results['selections']
+            if hk_equity_selections:
+                all_selections.extend(hk_equity_selections)
+                logger.info(f"Added {len(hk_equity_selections)} Hong Kong equity selections")
+        
         # Calculate execution time
         execution_time = time.time() - start_time
         
@@ -533,7 +937,7 @@ def aggregation_node(state: SelectionAgentState) -> SelectionAgentState:
         
         # Add equity results
         if equity_results:
-            final_selections['equity'] = {
+            final_selections['US_EQUITIES'] = {
                 'selections': equity_results.get('selections', []),
                 'selection_count': equity_results.get('selection_count', 0),
                 'success': equity_results.get('success', False),
@@ -545,7 +949,7 @@ def aggregation_node(state: SelectionAgentState) -> SelectionAgentState:
         
         # Add bond results
         if bonds_results:
-            final_selections['bonds'] = {
+            final_selections['BONDS'] = {
                 'selections': bonds_results.get('selections', []),
                 'selection_count': bonds_results.get('selection_count', 0),
                 'success': bonds_results.get('success', False),
@@ -557,7 +961,7 @@ def aggregation_node(state: SelectionAgentState) -> SelectionAgentState:
         
         # Add commodity results
         if commodity_results:
-            final_selections['commodity'] = {
+            final_selections['COMMODITIES'] = {
                 'selections': commodity_results.get('selections', []),
                 'selection_count': commodity_results.get('selection_count', 0),
                 'success': commodity_results.get('success', False),
@@ -565,6 +969,42 @@ def aggregation_node(state: SelectionAgentState) -> SelectionAgentState:
                 'message': commodity_results.get('message', ''),
                 'execution_time': execution_time,
                 'total_weight': commodity_results.get('total_weight', 0.0)
+            }
+        
+        # Add REITs results
+        if reits_results:
+            final_selections['REITS'] = {
+                'selections': reits_results.get('selections', []),
+                'selection_count': reits_results.get('selection_count', 0),
+                'success': reits_results.get('success', False),
+                'processing_time': reits_results.get('processing_time', 0),
+                'message': reits_results.get('message', ''),
+                'execution_time': execution_time,
+                'total_weight': reits_results.get('total_weight', 0.0)
+            }
+        
+        # Add crypto results
+        if crypto_results:
+            final_selections['CRYPTO'] = {
+                'selections': crypto_results.get('selections', []),
+                'selection_count': crypto_results.get('selection_count', 0),
+                'success': crypto_results.get('success', False),
+                'processing_time': crypto_results.get('processing_time', 0),
+                'message': crypto_results.get('message', ''),
+                'execution_time': execution_time,
+                'total_weight': crypto_results.get('total_weight', 0.0)
+            }
+        
+        # Add Hong Kong equity results
+        if hong_kong_equity_results:
+            final_selections['HONG_KONG_EQUITIES'] = {
+                'selections': hong_kong_equity_results.get('selections', []),
+                'selection_count': hong_kong_equity_results.get('selection_count', 0),
+                'success': hong_kong_equity_results.get('success', False),
+                'processing_time': hong_kong_equity_results.get('processing_time', 0),
+                'message': hong_kong_equity_results.get('message', ''),
+                'execution_time': execution_time,
+                'total_weight': hong_kong_equity_results.get('total_weight', 0.0)
             }
         
         # Store summary metadata in the state for debugging/logging purposes
@@ -576,6 +1016,9 @@ def aggregation_node(state: SelectionAgentState) -> SelectionAgentState:
                 'equity_success': equity_results.get('success', False),
                 'bonds_success': bonds_results.get('success', False),
                 'commodity_success': commodity_results.get('success', False),
+                'reits_success': reits_results.get('success', False),
+                'crypto_success': crypto_results.get('success', False),
+                'hong_kong_equity_success': hong_kong_equity_results.get('success', False),
                 'timestamp': datetime.now().isoformat()
             }
         }
@@ -625,6 +1068,9 @@ def create_selection_workflow() -> CompiledStateGraph:
     workflow.add_node("equity_selection", equity_selection_node)
     workflow.add_node("bonds_selection", bonds_selection_node)
     workflow.add_node("commodity_selection", commodity_selection_node)
+    workflow.add_node("reits_selection", reits_selection_node)
+    workflow.add_node("crypto_selection", crypto_selection_node)
+    workflow.add_node("hong_kong_equity_selection", hong_kong_equity_selection_node)
     workflow.add_node("aggregation", aggregation_node)
     
     # Add edges to define the flow
@@ -632,7 +1078,10 @@ def create_selection_workflow() -> CompiledStateGraph:
     workflow.add_edge("initialization", "equity_selection")
     workflow.add_edge("equity_selection", "bonds_selection")
     workflow.add_edge("bonds_selection", "commodity_selection")
-    workflow.add_edge("commodity_selection", "aggregation")
+    workflow.add_edge("commodity_selection", "reits_selection")
+    workflow.add_edge("reits_selection", "crypto_selection")
+    workflow.add_edge("crypto_selection", "hong_kong_equity_selection")
+    workflow.add_edge("hong_kong_equity_selection", "aggregation")
     workflow.add_edge("aggregation", END)
     
     # Compile the workflow
@@ -745,11 +1194,13 @@ def run_selection_agent(regions: Optional[List[str]] = None,
 def main() -> int:
     """Main entry point for standalone testing"""
     try:
-        # Example usage with sample data
+        # Example usage with sample data using portfolio_construction.py asset class names
         sample_asset_class_weights = {
-            'equity': 0.5,
-            'bonds': 0.35,
-            'commodity': 0.15
+            'US_EQUITIES': 0.4,
+            'BONDS': 0.3,
+            'COMMODITIES': 0.15,
+            'REITS': 0.1,
+            'CRYPTO': 0.05
         }
         
         # Run the selection agent
