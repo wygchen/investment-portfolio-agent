@@ -1,0 +1,93 @@
+
+graph TB
+    %% User Interface Layer
+    subgraph FRONTEND["**Frontend** - Next.js Web Application"]
+        ASSESS[Assessment Form<br/>User Input Collection]
+        DASH[Portfolio Dashboard<br/>Data Visualization]
+        UI[Dashboard UI<br/>React Components]
+        REPORT[AI Report Viewer<br/>Investment Reports]
+    end
+
+    %% API Gateway Layer
+    subgraph API_LAYER["**API Layer - FastAPI Backend**"]
+        API[FastAPI Server<br/>Port 8003]
+        VALIDATE[Assessment Validation<br/>Data Validation]
+        STREAM[Streaming API<br/>Real-time Updates]
+    end
+
+    %% AI Agentic Layer - LangGraph Orchestration
+    subgraph AGENTS["AI Agentic Layer LangGraph Workflow"]
+      
+        
+        subgraph "**Specialized AI Agents**"
+            RISK[**Risk Analytics Agent**<br/>Financial Risk Assessment]
+            
+                PORTFOLIO[**Portfolio Construction**<br/>Optimization Engine]
+                SELECTION[**Selection Agent**<br/>Security Selection]
+            
+
+            COMM[**Communication Agent**<br/>Report Generation]
+        end
+    end
+
+    %% WatsonX AI Services
+    subgraph WATSONX["**IBM WatsonX AI Platform**"]
+        LLM[WatsonX LLM<br/>Granite Models]
+        EMBED[WatsonX Embeddings<br/>Text Processing]
+        CREDS[API Credentials<br/>Authentication]
+    end
+
+    %% External Data Sources
+    subgraph EXTERNAL["**External Data APIs**"]
+        YAHOO[Yahoo Finance<br/>Market Data]
+        NEWS[News APIs<br/>Market Sentiment]
+    end
+
+    %% Data Processing & Storage
+    subgraph DATA_LAYER["**Data Processing Layer**"]
+        PROFILE[**Profile Processor**<br/>User Data Processing]
+        RATIOS[**Financial Ratios Engine**<br/>Quantitative Analysis]
+        SENTIMENT[**Market Sentiment**<br/>News Analysis]
+        SHARING[**Data Sharing**<br/>Inter-Agent Communication]
+    end
+
+    %% Portfolio Analytics
+    subgraph ANALYTICS["**Portfolio Analytics Engine**"]
+        PYPFOPT[**PyPortfolioOpt**<br/>Modern Portfolio Theory]
+        SCIPY[**SciPy Optimization**<br/>Mathematical Optimization]
+        COVARIANCE[**Covariance Matrix**<br/>Risk Modeling]
+        SHARPE[**Sharpe Ratio**<br/>Performance Metrics]
+    end
+
+    %% Main Flow - Simplified Connections
+    FRONTEND --> API_LAYER
+    API_LAYER --> AGENTS
+    AGENTS --> FRONTEND
+
+    %% AI Services Connection
+    AGENTS -.-> WATSONX
+
+    %% Data Sources Connection
+    AGENTS --> DATA_LAYER
+    AGENTS --> ANALYTICS
+    
+    %% External Data Connection
+    EXTERNAL -.-> DATA_LAYER
+
+    %% Styling
+    classDef frontend fill:#e1f5fe,stroke:#01579b,stroke-width:3px
+    classDef api fill:#f3e5f5,stroke:#4a148c,stroke-width:3px
+    classDef agent fill:#e8f5e8,stroke:#1b5e20,stroke-width:3px
+    classDef watsonx fill:#fff3e0,stroke:#e65100,stroke-width:3px
+    classDef external fill:#fce4ec,stroke:#880e4f,stroke-width:3px
+    classDef data fill:#f1f8e9,stroke:#33691e,stroke-width:3px
+    classDef analytics fill:#e0f2f1,stroke:#004d40,stroke-width:3px
+
+    class FRONTEND frontend
+    class API_LAYER api
+    class AGENTS agent
+    class WATSONX watsonx
+    class EXTERNAL external
+    class DATA_LAYER data
+    class ANALYTICS analytics
+```

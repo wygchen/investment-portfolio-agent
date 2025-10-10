@@ -1,0 +1,76 @@
+graph TD
+    START([User Assessment Input]) --> VALIDATE[Generate User Profile]
+    VALIDATE --> MAIN_AGENT[Main Agent - LangGraph Workflow]
+    
+    subgraph "LangGraph State Machine"
+        MAIN_AGENT --> INIT_STATE[Initialize Workflow State]
+        INIT_STATE --> RISK_NODE[Risk Analysis Node]
+        
+        RISK_NODE --> RISK_AGENT[Risk Analytics Agent]
+        RISK_AGENT --> RISK_COMPLETE{Risk Analysis Complete?}
+        RISK_COMPLETE -->|No| RISK_RETRY[Retry Risk Analysis]
+        RISK_RETRY --> RISK_AGENT
+        RISK_COMPLETE -->|Yes| UPDATE_STATE1[Update State: Risk Blueprint]
+        
+        UPDATE_STATE1 --> MARKET_NODE[Market Analysis Node]
+        MARKET_NODE --> MARKET_AGENT[Market Analysis Agent]
+        MARKET_AGENT --> MARKET_COMPLETE{Market Analysis Complete?}
+        MARKET_COMPLETE -->|No| MARKET_RETRY[Retry Market Analysis]
+        MARKET_RETRY --> MARKET_AGENT
+        MARKET_COMPLETE -->|Yes| UPDATE_STATE2[Update State: Market Context]
+        
+        UPDATE_STATE2 --> PORTFOLIO_NODE[Portfolio Construction Node]
+        PORTFOLIO_NODE --> PORTFOLIO_AGENT[Portfolio Construction Agent]
+        PORTFOLIO_AGENT --> PORTFOLIO_COMPLETE{Portfolio Complete?}
+        PORTFOLIO_COMPLETE -->|No| PORTFOLIO_RETRY[Retry Portfolio Construction]
+        PORTFOLIO_RETRY --> PORTFOLIO_AGENT
+        PORTFOLIO_COMPLETE -->|Yes| UPDATE_STATE3[Update State: Portfolio Allocation]
+        
+        UPDATE_STATE3 --> SELECTION_NODE[Equity Selection Node]
+        SELECTION_NODE --> SELECTION_AGENT[Equity Selection Agent]
+        SELECTION_AGENT --> SELECTION_COMPLETE{Selection Complete?}
+        SELECTION_COMPLETE -->|No| SELECTION_RETRY[Retry Selection]
+        SELECTION_RETRY --> SELECTION_AGENT
+        SELECTION_COMPLETE -->|Yes| UPDATE_STATE4[Update State: Security Selection]
+        
+        UPDATE_STATE4 --> COMMUNICATION_NODE[Communication Node]
+        COMMUNICATION_NODE --> COMMUNICATION_AGENT[Communication Agent]
+        COMMUNICATION_AGENT --> COMM_COMPLETE{Report Complete?}
+        COMM_COMPLETE -->|No| COMM_RETRY[Retry Report Generation]
+        COMM_RETRY --> COMMUNICATION_AGENT
+        COMM_COMPLETE -->|Yes| FINAL_STATE[Final State: Complete Report]
+    end
+    
+    FINAL_STATE --> RESPONSE[Format API Response]
+    RESPONSE --> CACHE_RESULT[Cache Results]
+    CACHE_RESULT --> RETURN[Return to User]
+    
+    %% Error Handling
+    RISK_AGENT -->|Error| FALLBACK_RISK[Risk Fallback]
+    MARKET_AGENT -->|Error| FALLBACK_MARKET[Market Fallback]
+    PORTFOLIO_AGENT -->|Error| FALLBACK_PORTFOLIO[Portfolio Fallback]
+    SELECTION_AGENT -->|Error| FALLBACK_SELECTION[Selection Fallback]
+    COMMUNICATION_AGENT -->|Error| FALLBACK_COMM[Communication Fallback]
+    
+    FALLBACK_RISK --> UPDATE_STATE1
+    FALLBACK_MARKET --> UPDATE_STATE2
+    FALLBACK_PORTFOLIO --> UPDATE_STATE3
+    FALLBACK_SELECTION --> UPDATE_STATE4
+    FALLBACK_COMM --> FINAL_STATE
+    
+    %% Styling
+    classDef start fill:#e8f5e8
+    classDef process fill:#fff3e0
+    classDef agent fill:#e1f5fe
+    classDef decision fill:#fce4ec
+    classDef state fill:#f3e5f5
+    classDef fallback fill:#ffcdd2
+    classDef end fill:#c8e6c9
+    
+    class START,RETURN start
+    class VALIDATE,MAIN_AGENT,RESPONSE,CACHE_RESULT process
+    class RISK_AGENT,MARKET_AGENT,PORTFOLIO_AGENT,SELECTION_AGENT,COMMUNICATION_AGENT agent
+    class RISK_COMPLETE,MARKET_COMPLETE,PORTFOLIO_COMPLETE,SELECTION_COMPLETE,COMM_COMPLETE decision
+    class INIT_STATE,UPDATE_STATE1,UPDATE_STATE2,UPDATE_STATE3,UPDATE_STATE4,FINAL_STATE state
+    class FALLBACK_RISK,FALLBACK_MARKET,FALLBACK_PORTFOLIO,FALLBACK_SELECTION,FALLBACK_COMM fallback
+    class FINAL_STATE end
