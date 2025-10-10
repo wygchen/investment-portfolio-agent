@@ -343,21 +343,19 @@ async def generate_investment_report():
             "generated_date": datetime.now().strftime("%B %d, %Y"),
             "client_id": "demo_profile_12345",
             "executive_summary": "This comprehensive investment strategy is designed to meet your long-term financial objectives through a carefully balanced portfolio approach. The recommended $125,000 portfolio emphasizes growth potential while maintaining appropriate risk management, targeting a 7.6% annual return aligned with your ESG preferences and moderate risk tolerance.",
-            "allocation_rationale": """The portfolio allocation is strategically designed for long-term wealth building with ESG integration:
+            "allocation_rationale": """The portfolio allocation is strategically designed for long-term wealth building with balanced diversification:
 
-• Equity Allocation (70%): Provides growth potential through high-quality individual stocks including Microsoft (8%), Google (6%), Apple (5%), and NVIDIA (4%)
-• Technology Focus (29%): Leverages digital transformation trends through leading companies
-• Fixed Income (30%): Offers stability through bond ETFs and government securities
-• ESG Integration: All investments are screened to avoid tobacco and weapons sectors
-• Geographic Focus: Primarily US-focused with some international ETF exposure""",
-            "selection_rationale": """Individual stock selections focus on industry-leading companies with strong ESG characteristics:
+• Bond Allocation (40%): Provides stability and income through diversified bond ETFs including BND (20%), VTEB (12%), and TIP (8%)
+• Equity Allocation (35%): Offers growth potential through quality stocks like Microsoft (8%), Apple (6%), and Google (6%), plus broad market exposure via VTI (15%)
+• Commodities Allocation (15%): Provides inflation hedge and diversification through DJP (8%), USO (4%), and agricultural exposure via DBA (3%)
+• Gold Allocation (10%): Serves as portfolio hedge and store of value through GLD (6%) and IAU (4%)
+• Risk Management: Balanced allocation across asset classes reduces portfolio volatility and correlation risk""",
+            "selection_rationale": """Investment selections focus on diversified exposure across major asset classes:
 
-• Microsoft (MSFT): Cloud computing and AI leadership with carbon negative commitments
-• Google/Alphabet (GOOGL): Dominant search and cloud platforms with renewable energy focus
-• Apple (AAPL): Premium consumer technology with supply chain sustainability initiatives
-• NVIDIA (NVDA): AI and semiconductor leadership driving technological transformation
-• NextEra Energy (NEE): Largest renewable energy developer in North America
-• Tesla (TSLA): Electric vehicle and energy storage innovation leadership
+• Bond Holdings: BND provides broad bond market exposure, VTEB offers tax advantages, TIP provides inflation protection
+• Equity Holdings: VTI gives broad market exposure, MSFT/GOOGL/AAPL represent quality technology leaders with strong fundamentals
+• Commodity Holdings: DJP provides diversified commodity exposure, USO offers energy sector exposure, DBA covers agricultural commodities
+• Gold Holdings: GLD and IAU provide precious metals exposure as portfolio hedge and inflation protection
 
 ETF selections provide diversified exposure while maintaining ESG alignment and cost efficiency.""",
             "risk_commentary": """Portfolio risk characteristics are well-managed through diversification and quality selection:
@@ -384,31 +382,24 @@ Expected annual return of 7.6% with moderate volatility through systematic diver
                 "Plan for future contribution increases aligned with income growth"
             ],
             "portfolio_allocation": {
-                "Technology Stocks": 29.0,
-                "Bonds": 30.0,
-                "Renewable Energy": 12.0,
-                "International": 17.0,
-                "Broad Market ETFs": 8.0,
-                "Real Estate": 4.0
+                "Bond": 40.0,
+                "Equity": 35.0,
+                "Commodities": 15.0,
+                "Gold": 10.0
             },
             "individual_holdings": [
+                {"name": "Vanguard Total Bond Market ETF", "symbol": "BND", "allocation_percent": 20.0, "value": 25000},
+                {"name": "Vanguard Total Stock Market ETF", "symbol": "VTI", "allocation_percent": 15.0, "value": 18750},
+                {"name": "Vanguard Tax-Exempt Bond ETF", "symbol": "VTEB", "allocation_percent": 12.0, "value": 15000},
                 {"name": "Microsoft Corporation", "symbol": "MSFT", "allocation_percent": 8.0, "value": 10000},
-                {"name": "Alphabet Inc", "symbol": "GOOGL", "allocation_percent": 6.0, "value": 7500},
-                {"name": "Apple Inc", "symbol": "AAPL", "allocation_percent": 5.0, "value": 6250},
-                {"name": "NVIDIA Corporation", "symbol": "NVDA", "allocation_percent": 4.0, "value": 5000},
-                {"name": "Amazon.com Inc", "symbol": "AMZN", "allocation_percent": 3.0, "value": 3750},
-                {"name": "Meta Platforms Inc", "symbol": "META", "allocation_percent": 3.0, "value": 3750},
-                {"name": "Vanguard Total Bond Market ETF", "symbol": "BND", "allocation_percent": 15.0, "value": 18750},
-                {"name": "Vanguard Tax-Exempt Bond ETF", "symbol": "VTEB", "allocation_percent": 8.0, "value": 10000},
-                {"name": "iShares TIPS Bond ETF", "symbol": "TIP", "allocation_percent": 7.0, "value": 8750},
-                {"name": "Vanguard Total Stock Market ETF", "symbol": "VTI", "allocation_percent": 8.0, "value": 10000},
-                {"name": "Vanguard Total International Stock ETF", "symbol": "VXUS", "allocation_percent": 10.0, "value": 12500},
-                {"name": "Vanguard FTSE Europe ETF", "symbol": "VEA", "allocation_percent": 7.0, "value": 8750},
-                {"name": "NextEra Energy Inc", "symbol": "NEE", "allocation_percent": 4.0, "value": 5000},
-                {"name": "Tesla Inc", "symbol": "TSLA", "allocation_percent": 3.0, "value": 3750},
-                {"name": "First Solar Inc", "symbol": "FSLR", "allocation_percent": 2.0, "value": 2500},
-                {"name": "Brookfield Renewable Corp", "symbol": "BEPC", "allocation_percent": 2.0, "value": 2500},
-                {"name": "Vanguard Real Estate ETF", "symbol": "VNQ", "allocation_percent": 4.0, "value": 5000}
+                {"name": "iPath Bloomberg Commodity ETF", "symbol": "DJP", "allocation_percent": 8.0, "value": 10000},
+                {"name": "iShares TIPS Bond ETF", "symbol": "TIP", "allocation_percent": 8.0, "value": 10000},
+                {"name": "Alphabet Inc Class A", "symbol": "GOOGL", "allocation_percent": 6.0, "value": 7500},
+                {"name": "Apple Inc", "symbol": "AAPL", "allocation_percent": 6.0, "value": 7500},
+                {"name": "SPDR Gold Shares ETF", "symbol": "GLD", "allocation_percent": 6.0, "value": 7500},
+                {"name": "United States Oil Fund ETF", "symbol": "USO", "allocation_percent": 4.0, "value": 5000},
+                {"name": "iShares Gold Trust ETF", "symbol": "IAU", "allocation_percent": 4.0, "value": 5000},
+                {"name": "Invesco DB Agriculture Fund", "symbol": "DBA", "allocation_percent": 3.0, "value": 3750}
             ]
         }
         
@@ -506,21 +497,24 @@ async def get_latest_report():
                 "Plan contribution increases"
             ],
             "portfolio_allocation": {
-                "Technology Stocks": 29.0,
-                "Bonds": 30.0,
-                "Renewable Energy": 12.0,
-                "International": 17.0,
-                "Broad Market ETFs": 8.0,
-                "Real Estate": 4.0
+                "Bond": 40.0,
+                "Equity": 35.0,
+                "Commodities": 15.0,
+                "Gold": 10.0
             },
             "individual_holdings": [
+                {"name": "Vanguard Total Bond Market ETF", "symbol": "BND", "allocation_percent": 20.0, "value": 25000},
+                {"name": "Vanguard Total Stock Market ETF", "symbol": "VTI", "allocation_percent": 15.0, "value": 18750},
+                {"name": "Vanguard Tax-Exempt Bond ETF", "symbol": "VTEB", "allocation_percent": 12.0, "value": 15000},
                 {"name": "Microsoft Corporation", "symbol": "MSFT", "allocation_percent": 8.0, "value": 10000},
-                {"name": "Alphabet Inc", "symbol": "GOOGL", "allocation_percent": 6.0, "value": 7500},
-                {"name": "Apple Inc", "symbol": "AAPL", "allocation_percent": 5.0, "value": 6250},
-                {"name": "NVIDIA Corporation", "symbol": "NVDA", "allocation_percent": 4.0, "value": 5000},
-                {"name": "Vanguard Total Bond Market ETF", "symbol": "BND", "allocation_percent": 15.0, "value": 18750},
-                {"name": "NextEra Energy Inc", "symbol": "NEE", "allocation_percent": 4.0, "value": 5000},
-                {"name": "Tesla Inc", "symbol": "TSLA", "allocation_percent": 3.0, "value": 3750}
+                {"name": "iPath Bloomberg Commodity ETF", "symbol": "DJP", "allocation_percent": 8.0, "value": 10000},
+                {"name": "iShares TIPS Bond ETF", "symbol": "TIP", "allocation_percent": 8.0, "value": 10000},
+                {"name": "Alphabet Inc Class A", "symbol": "GOOGL", "allocation_percent": 6.0, "value": 7500},
+                {"name": "Apple Inc", "symbol": "AAPL", "allocation_percent": 6.0, "value": 7500},
+                {"name": "SPDR Gold Shares ETF", "symbol": "GLD", "allocation_percent": 6.0, "value": 7500},
+                {"name": "United States Oil Fund ETF", "symbol": "USO", "allocation_percent": 4.0, "value": 5000},
+                {"name": "iShares Gold Trust ETF", "symbol": "IAU", "allocation_percent": 4.0, "value": 5000},
+                {"name": "Invesco DB Agriculture Fund", "symbol": "DBA", "allocation_percent": 3.0, "value": 3750}
             ]
         }
         
@@ -742,12 +736,10 @@ async def stream_main_agent_workflow(user_profile):
                 "individual_stocks": 0.39,   # 39% individual stock allocation
                 "etf_allocation": 0.61,      # 61% ETF allocation
                 "sectors": {
-                    "technology": 0.29,        # Higher tech allocation (MSFT, GOOGL, AAPL, NVDA + tech ETFs)
-                    "renewable_energy": 0.12,  # ESG theme from test data (TSLA, NEE, ENPH, ICLN)
-                    "real_estate": 0.04,       # VNQ + PLD
-                    "bonds": 0.30,             # BND + VTEB
-                    "international": 0.17,     # VXUS + ASML + TSM
-                    "broad_market": 0.08       # VTI + ESGV (non-sector specific)
+                    "bond": 0.40,              # Fixed income allocation
+                    "equity": 0.35,            # Stock allocation including individual stocks and equity ETFs
+                    "commodities": 0.15,       # Commodity exposure including energy and agriculture
+                    "gold": 0.10               # Precious metals allocation
                 },
                 "stock_selection_approach": {
                     "individual_stock_criteria": ["ESG_leadership", "technology_innovation", "renewable_energy_focus"],

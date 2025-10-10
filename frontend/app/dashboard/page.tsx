@@ -367,12 +367,10 @@ export default function DashboardPage() {
                     <RechartsPieChart>
                       <Pie
                         data={[
-                          { name: "Technology Stocks", value: 29, amount: 36250, color: "#3B82F6" },
-                          { name: "Bonds", value: 30, amount: 37500, color: "#10B981" },
-                          { name: "Renewable Energy", value: 12, amount: 15000, color: "#22C55E" },
-                          { name: "International", value: 17, amount: 21250, color: "#8B5CF6" },
-                          { name: "Broad Market ETFs", value: 8, amount: 10000, color: "#F59E0B" },
-                          { name: "Real Estate", value: 4, amount: 5000, color: "#EF4444" },
+                          { name: "Bond", value: 40, amount: 50000, color: "#3B82F6" },
+                          { name: "Equity", value: 35, amount: 43750, color: "#10B981" },
+                          { name: "Commodities", value: 15, amount: 18750, color: "#F59E0B" },
+                          { name: "Gold", value: 10, amount: 12500, color: "#EF4444" },
                         ]}
                         cx="50%"
                         cy="50%"
@@ -382,12 +380,10 @@ export default function DashboardPage() {
                         dataKey="value"
                       >
                         {[
-                          { name: "Technology Stocks", value: 29, amount: 36250, color: "#3B82F6" },
-                          { name: "Bonds", value: 30, amount: 37500, color: "#10B981" },
-                          { name: "Renewable Energy", value: 12, amount: 15000, color: "#22C55E" },
-                          { name: "International", value: 17, amount: 21250, color: "#8B5CF6" },
-                          { name: "Broad Market ETFs", value: 8, amount: 10000, color: "#F59E0B" },
-                          { name: "Real Estate", value: 4, amount: 5000, color: "#EF4444" },
+                          { name: "Bond", value: 40, amount: 50000, color: "#3B82F6" },
+                          { name: "Equity", value: 35, amount: 43750, color: "#10B981" },
+                          { name: "Commodities", value: 15, amount: 18750, color: "#F59E0B" },
+                          { name: "Gold", value: 10, amount: 12500, color: "#EF4444" },
                         ].map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={entry.color} />
                         ))}
@@ -404,12 +400,10 @@ export default function DashboardPage() {
                   </ResponsiveContainer>
                   <div className="space-y-3">
                     {[
-                      { name: "Technology Stocks", value: 29, amount: 36250, color: "#3B82F6" },
-                      { name: "Bonds", value: 30, amount: 37500, color: "#10B981" },
-                      { name: "Renewable Energy", value: 12, amount: 15000, color: "#22C55E" },
-                      { name: "International", value: 17, amount: 21250, color: "#8B5CF6" },
-                      { name: "Broad Market ETFs", value: 8, amount: 10000, color: "#F59E0B" },
-                      { name: "Real Estate", value: 4, amount: 5000, color: "#EF4444" },
+                      { name: "Bond", value: 40, amount: 50000, color: "#3B82F6" },
+                      { name: "Equity", value: 35, amount: 43750, color: "#10B981" },
+                      { name: "Commodities", value: 15, amount: 18750, color: "#F59E0B" },
+                      { name: "Gold", value: 10, amount: 12500, color: "#EF4444" },
                     ].map((item) => (
                       <div key={item.name} className="flex items-center justify-between">
                         <div className="flex items-center space-x-2">
@@ -471,12 +465,10 @@ export default function DashboardPage() {
                 <CardContent>
                   <div className="space-y-4">
                     {[
-                      { name: "Technology Stocks", current: 29, target: 30 },
-                      { name: "Bonds", current: 30, target: 30 },
-                      { name: "Renewable Energy", current: 12, target: 12 },
-                      { name: "International", current: 17, target: 15 },
-                      { name: "Broad Market ETFs", current: 8, target: 9 },
-                      { name: "Real Estate", current: 4, target: 4 },
+                      { name: "Bond", current: 40, target: 40 },
+                      { name: "Equity", current: 35, target: 35 },
+                      { name: "Commodities", current: 15, target: 15 },
+                      { name: "Gold", current: 10, target: 10 },
                     ].map((item) => (
                       <div key={item.name} className="space-y-2">
                         <div className="flex justify-between text-sm">
@@ -503,34 +495,37 @@ export default function DashboardPage() {
                 <CardContent>
                   <div className="space-y-3">
                     {[
-                      // Individual Technology Stocks (29% total)
-                      { ticker: "MSFT", name: "Microsoft Corporation", value: 8, amount: 10000, change: "+3.2%", type: "stock" },
-                      { ticker: "GOOGL", name: "Alphabet Inc Class A", value: 6, amount: 7500, change: "+2.8%", type: "stock" },
-                      { ticker: "AAPL", name: "Apple Inc", value: 5, amount: 6250, change: "+1.9%", type: "stock" },
-                      { ticker: "NVDA", name: "NVIDIA Corporation", value: 4, amount: 5000, change: "+5.7%", type: "stock" },
-                      { ticker: "AMZN", name: "Amazon.com Inc", value: 3, amount: 3750, change: "+2.5%", type: "stock" },
-                      { ticker: "META", name: "Meta Platforms Inc", value: 3, amount: 3750, change: "+4.1%", type: "stock" },
-                      // Bond Holdings (30% total)
-                      { ticker: "BND", name: "Vanguard Total Bond Market ETF", value: 15, amount: 18750, change: "+0.8%", type: "bond" },
-                      { ticker: "VTEB", name: "Vanguard Tax-Exempt Bond ETF", value: 8, amount: 10000, change: "+0.6%", type: "bond" },
-                      { ticker: "TIP", name: "iShares TIPS Bond ETF", value: 7, amount: 8750, change: "+1.1%", type: "bond" },
-                      // Broad Market ETFs (8% total - matching allocation)
-                      { ticker: "VTI", name: "Vanguard Total Stock Market ETF", value: 8, amount: 10000, change: "+2.2%", type: "etf" },
-                      // International Holdings (17% total)
-                      { ticker: "VXUS", name: "Vanguard Total International ETF", value: 10, amount: 12500, change: "+1.6%", type: "etf" },
-                      { ticker: "VEA", name: "Vanguard Developed Markets ETF", value: 7, amount: 8750, change: "+1.8%", type: "etf" },
+                      // Bond Holdings (40% total)
+                      { ticker: "BND", name: "Vanguard Total Bond Market ETF", value: 20, amount: 25000, change: "+0.8%", type: "bond" },
+                      { ticker: "VTEB", name: "Vanguard Tax-Exempt Bond ETF", value: 12, amount: 15000, change: "+0.6%", type: "bond" },
+                      { ticker: "TIP", name: "iShares TIPS Bond ETF", value: 8, amount: 10000, change: "+1.1%", type: "bond" },
+                      // Equity Holdings (35% total)
+                      { ticker: "VTI", name: "Vanguard Total Stock Market ETF", value: 15, amount: 18750, change: "+2.2%", type: "equity" },
+                      { ticker: "MSFT", name: "Microsoft Corporation", value: 8, amount: 10000, change: "+3.2%", type: "equity" },
+                      { ticker: "GOOGL", name: "Alphabet Inc Class A", value: 6, amount: 7500, change: "+2.8%", type: "equity" },
+                      { ticker: "AAPL", name: "Apple Inc", value: 6, amount: 7500, change: "+1.9%", type: "equity" },
+                      // Commodities Holdings (15% total)
+                      { ticker: "DJP", name: "iPath Bloomberg Commodity ETF", value: 8, amount: 10000, change: "+1.5%", type: "commodities" },
+                      { ticker: "USO", name: "United States Oil Fund ETF", value: 4, amount: 5000, change: "+2.8%", type: "commodities" },
+                      { ticker: "DBA", name: "Invesco DB Agriculture Fund", value: 3, amount: 3750, change: "+0.9%", type: "commodities" },
+                      // Gold Holdings (10% total)
+                      { ticker: "GLD", name: "SPDR Gold Shares ETF", value: 6, amount: 7500, change: "+1.2%", type: "gold" },
+                      { ticker: "IAU", name: "iShares Gold Trust ETF", value: 4, amount: 5000, change: "+1.1%", type: "gold" },
                     ].map((item) => (
                       <div key={item.ticker} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
                         <div className="flex items-center space-x-3">
                           <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${
-                            item.type === 'stock' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'
+                            item.type === 'bond' ? 'bg-blue-100 text-blue-700' :
+                            item.type === 'equity' ? 'bg-green-100 text-green-700' :
+                            item.type === 'commodities' ? 'bg-orange-100 text-orange-700' :
+                            item.type === 'gold' ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-700'
                           }`}>
                             {item.ticker.slice(0, 2)}
                           </div>
                           <div>
                             <div className="font-medium flex items-center space-x-2">
                               <span>{item.ticker}</span>
-                              <Badge variant={item.type === 'stock' ? 'default' : 'secondary'} className="text-xs">
+                              <Badge variant={item.type === 'equity' ? 'default' : 'secondary'} className="text-xs">
                                 {item.type.toUpperCase()}
                               </Badge>
                             </div>
@@ -724,10 +719,10 @@ export default function DashboardPage() {
                       <h4 className="font-medium mb-3">Sustainable Investment Themes</h4>
                       <div className="space-y-3">
                         {[
-                          { theme: "Clean Technology", allocation: "29%", companies: "MSFT, GOOGL, NVDA, AAPL" },
-                          { theme: "Renewable Energy", allocation: "12%", companies: "TSLA, NEE, ENPH, ICLN" },
-                          { theme: "Sustainable Infrastructure", allocation: "4%", companies: "PLD (green logistics)" },
-                          { theme: "ESG Leaders", allocation: "45%", companies: "ESGV, ASML, TSM" },
+                          { theme: "Fixed Income & Bonds", allocation: "40%", companies: "BND, VTEB, TIP" },
+                          { theme: "Equity & Growth", allocation: "35%", companies: "VTI, MSFT, GOOGL, AAPL" },
+                          { theme: "Commodities & Resources", allocation: "15%", companies: "DJP, USO, DBA" },
+                          { theme: "Precious Metals", allocation: "10%", companies: "GLD, IAU" },
                         ].map((item) => (
                           <div key={item.theme} className="p-3 bg-muted/30 rounded-lg">
                             <div className="flex justify-between items-center mb-1">
