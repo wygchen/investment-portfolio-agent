@@ -7,8 +7,8 @@ pipeline from user profile to final portfolio recommendations.
 
 Workflow:
 1. Risk Analytics Agent - Analyzes risk profile and generates risk blueprint
-2. Portfolio Construction - Optimizes portfolio allocation based on risk profile  
-3. Selection Agent - Selects specific securities for each asset class
+2. Selection Agent - Selects asset classes and regions based on risk profile
+3. Portfolio Construction - Optimizes portfolio allocation based on selections
 4. Communication Agent - Generates final investment report
 
 Configuration:
@@ -233,9 +233,9 @@ class MainAgent:
         
         # Add edges to define the sequential flow
         workflow.add_edge(START, "risk_analysis")
-        workflow.add_edge("risk_analysis", "portfolio_construction")
-        workflow.add_edge("portfolio_construction", "selection")
-        workflow.add_edge("selection", "communication")
+        workflow.add_edge("risk_analysis", "selection")
+        workflow.add_edge( "selection", "portfolio_construction")
+        workflow.add_edge("portfolio_construction", "communication")
         workflow.add_edge("communication", END)
         
         # Compile and store the workflow
@@ -324,16 +324,16 @@ class MainAgent:
 
     def portfolio_construction_node(self, state: MainAgentState) -> MainAgentState:
         """
-        Node 3: Portfolio Construction - Optimize portfolio allocation
+        Node 4: Portfolio Construction - Optimize portfolio allocation
         
         Args:
-            state: Current workflow state with risk blueprint
+            state: Current workflow state with risk blueprint and security selections
             
         Returns:
             Updated state with portfolio allocation
         """
         logger.info("\n" + "="*60)
-        logger.info("NODE 3: PORTFOLIO CONSTRUCTION")
+        logger.info("NODE 4: PORTFOLIO CONSTRUCTION")
         logger.info("="*60)
         
         try:
@@ -341,8 +341,11 @@ class MainAgent:
             
             # Check prerequisites
             risk_blueprint = state.get("risk_blueprint")
+            security_selections = state.get("security_selections")
             if not risk_blueprint:
                 raise ValueError("Risk blueprint not available from risk analysis node")
+            if not security_selections:
+                raise ValueError("Security selections not available from selection node")
             
             user_profile = state.get("user_profile")
             
@@ -466,25 +469,25 @@ class MainAgent:
 
     def selection_node(self, state: MainAgentState) -> MainAgentState:
         """
-        Node 4: Selection Agent - Select specific securities for each asset class
+        Node 3: Selection Agent - Select asset classes and regions based on risk profile
         
         Args:
-            state: Current workflow state with portfolio allocation
+            state: Current workflow state with risk blueprint
             
         Returns:
             Updated state with security selections
         """
         logger.info("\n" + "="*60)
-        logger.info("NODE 4: SELECTION AGENT")
+        logger.info("NODE 3: SELECTION AGENT")
         logger.info("="*60)
         
         try:
             state["current_node"] = "selection"
             
             # Check prerequisites
-            portfolio_allocation = state.get("portfolio_allocation")
-            if not portfolio_allocation:
-                raise ValueError("Portfolio allocation not available from portfolio construction node")
+            risk_blueprint = state.get("risk_blueprint")
+            if not risk_blueprint:
+                raise ValueError("Risk blueprint not available from risk analysis node")
             
             user_profile = state.get("user_profile", {})
             
