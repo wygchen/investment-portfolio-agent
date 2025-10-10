@@ -392,6 +392,137 @@ def run_optimization(method="pypfopt", cov_method="ledoit_wolf", max_bounds_to_t
 # Run optimization (default: use PyPortfolioOpt if available)
 opt_method = "pypfopt" if PYPFOPT_AVAILABLE else "scipy"
 optimal_weights, cov_matrix = run_optimization(method=opt_method, cov_method=("ledoit_wolf" if PYPFOPT_AVAILABLE else "sample"), max_bounds_to_test=max_bounds_to_test)
+
+def run_optimization_with_tickers(tickers, method="pypfopt", cov_method="ledoit_wolf", max_bounds_to_test=None):
+    """
+    Run portfolio optimization with specific tickers.
+    
+    Args:
+        tickers: List of ticker symbols to include in optimization
+        method: 'pypfopt' or 'scipy' optimization method
+        cov_method: Covariance estimation method
+        max_bounds_to_test: List of upper bounds to test
+        
+    Returns:
+        Tuple of (optimal_weights, cov_matrix)
+    """
+    global adj_close_df, log_returns
+    
+    if max_bounds_to_test is None:
+        max_bounds_to_test = [0.2, 0.3, 0.4, 0.5]
+    
+    # Filter data to only include specified tickers
+    if not all(ticker in adj_close_df.columns for ticker in tickers):
+        # Download missing ticker data
+        for ticker in tickers:
+            if ticker not in adj_close_df.columns:
+                try:
+                    data = yf.download(ticker, start=start_date, end=end_date)
+                    adj_close_df[ticker] = data['Close']
+                except Exception as e:
+                    print(f"Warning: Could not download data for {ticker}: {e}")
+        
+        # Recalculate log returns with new tickers
+        log_returns = np.log(adj_close_df / adj_close_df.shift(1))
+        log_returns = log_returns.dropna()
+    
+    # Filter to only use specified tickers
+    available_tickers = [t for t in tickers if t in adj_close_df.columns]
+    if not available_tickers:
+        # Fallback: use equal weights
+        return ([1.0/len(tickers) for _ in tickers], np.eye(len(tickers)))
+    
+    ticker_log_returns = log_returns[available_tickers]
+    ticker_cov = compute_cov_matrix(ticker_log_returns, method=cov_method)
+    
+    # Get market sentiment for these tickers
+    sentiment_results = analyze_market_sentiment(available_tickers)
+    try:
+        ticker_sentiment = np.array([_extract_avg_score(r) for r in sentiment_results], dtype=float)
+        if ticker_sentiment.shape[0] != len(available_tickers):
+            ticker_sentiment = np.full(len(available_tickers), 0.0)
+    except Exception:
+        ticker_sentiment = np.full(len(available_tickers), 0.0)
+    
+    if method == "pypfopt" and PYPFOPT_AVAILABLE:
+        # Use PyPortfolioOpt
+        try:
+            mu = expected_returns.mean_historical_return(adj_close_df[available_tickers])
+            
+            best_sharpe = -np.inf
+            best_weights = None
+            
+            for max_bound in max_bounds_to_test:
+                try:
+                    ef = EfficientFrontier(mu, ticker_cov, weight_bounds=(0, max_bound))
+                    weights = ef.max_sharpe()
+                    weights_array = np.array([weights.get(ticker, 0.0) for ticker in available_tickers])
+                    
+                    # Calculate Sharpe ratio
+                    portfolio_return = expected_return(weights_array, ticker_log_returns, ticker_sentiment)
+                    portfolio_volatility = standard_deviation(weights_array, ticker_cov)
+                    current_sharpe = (portfolio_return - risk_free_rate) / portfolio_volatility if portfolio_volatility > 0 else 0
+                    
+                    if current_sharpe > best_sharpe:
+                        best_sharpe = current_sharpe
+                        best_weights = weights_array
+                        
+                except Exception as e:
+                    print(f"PyPortfolioOpt failed for bound {max_bound}: {e}")
+                    continue
+            
+            if best_weights is not None:
+                # Pad with zeros for missing tickers
+                result_weights = []
+                for ticker in tickers:
+                    if ticker in available_tickers:
+                        idx = available_tickers.index(ticker)
+                        result_weights.append(best_weights[idx])
+                    else:
+                        result_weights.append(0.0)
+                
+                return result_weights, ticker_cov
+                
+        except Exception as e:
+            print(f"PyPortfolioOpt optimization failed: {e}")
+    
+    # Fallback to SciPy optimization
+    try:
+        # Determine equity indices for these tickers
+        if equity_indices_for_tickers is not None:
+            eq_idx = equity_indices_for_tickers(available_tickers)
+        else:
+            eq_idx = [i for i, t in enumerate(available_tickers) if t not in ("BND", "GLD")]
+        
+        best_bound, optimized_results = find_best_bound(
+            max_bounds_to_test,
+            available_tickers,
+            ticker_log_returns,
+            ticker_cov,
+            risk_free_rate,
+            ticker_sentiment,
+            user_risk_tolerance,
+            target_equity_allocation=target_equity_allocation,
+            equity_indices=eq_idx,
+        )
+        
+        if optimized_results is not None:
+            # Pad with zeros for missing tickers
+            result_weights = []
+            for ticker in tickers:
+                if ticker in available_tickers:
+                    idx = available_tickers.index(ticker)
+                    result_weights.append(optimized_results.x[idx])
+                else:
+                    result_weights.append(0.0)
+            
+            return result_weights, ticker_cov
+            
+    except Exception as e:
+        print(f"SciPy optimization failed: {e}")
+    
+    # Final fallback: equal weights
+    return ([1.0/len(tickers) for _ in tickers], np.eye(len(tickers)))
 """
 This will test each max bound for all assets and select the one with the highest Sharpe ratio.
 """

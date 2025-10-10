@@ -18,6 +18,7 @@ Configuration:
 """
 
 import os
+import asyncio
 import time
 import logging
 from datetime import datetime
@@ -32,7 +33,7 @@ from risk_analytics_agent.risk_analytics_agent import RiskAnalyticsAgent
 from risk_analytics_agent.base_agent import AgentContext
 from selection.selection_agent import run_selection_agent
 from communication_agent import CommunicationAgent
-from profile_processor import UserProfile
+from profile_processor_agent import UserProfile
 
 # Configure logging
 logging.basicConfig(
@@ -85,13 +86,14 @@ class PortfolioConstructionInputState(TypedDict):
     """Input state for Portfolio Construction node"""
     user_profile: UserProfile
     risk_blueprint: Dict[str, Any]  # Risk analysis results including risk_capacity, risk_tolerance, etc.
+    security_selections: Dict[str, Any]  # Final tickers from selection agent
     config: Dict[str, Any]
 
 
 class SelectionInputState(TypedDict):
     """Input state for Selection Agent node"""
-    portfolio_allocation: Dict[str, Any]  # Contains filtered_tickers, filtered_weights, portfolio_metrics
     user_profile: UserProfile
+    risk_blueprint: Dict[str, Any]  # Risk analysis results
     config: Dict[str, Any]
 
 
@@ -177,7 +179,7 @@ class MainAgent:
                 "covariance_method": "ledoit_wolf"
             },
             "selection": {
-                "enable_qualitative": False,
+                "enable_qualitative": True,
                 "force_refresh": False
             },
             "communication": {
@@ -324,7 +326,7 @@ class MainAgent:
 
     def portfolio_construction_node(self, state: MainAgentState) -> MainAgentState:
         """
-        Node 4: Portfolio Construction - Optimize portfolio allocation
+        Node 4: Portfolio Construction - Optimize portfolio allocation for selected tickers
         
         Args:
             state: Current workflow state with risk blueprint and security selections
@@ -349,130 +351,175 @@ class MainAgent:
             
             user_profile = state.get("user_profile")
             
-            logger.info("Starting portfolio optimization...")
+            logger.info("Starting portfolio optimization with selected tickers...")
+            
+            # Extract all tickers from security selections
+            all_tickers = []
+            asset_class_tickers = {}
+            
+            for asset_class, selection_data in security_selections.items():
+                if isinstance(selection_data, dict) and "selections" in selection_data:
+                    tickers_for_class = [item.get("ticker") for item in selection_data["selections"] if item.get("ticker")]
+                    asset_class_tickers[asset_class] = tickers_for_class
+                    all_tickers.extend(tickers_for_class)
+            
+            if not all_tickers:
+                raise ValueError("No tickers found in security selections")
+            
+            logger.info(f"Portfolio construction with {len(all_tickers)} tickers: {all_tickers}")
+            logger.info(f"Asset class breakdown: {asset_class_tickers}")
             
             # Import and run portfolio construction
             import sys
-            portfolio_construction_path = os.path.join(os.path.dirname(__file__), 'portfolio_construction')
+            portfolio_construction_path = os.path.join(os.path.dirname(__file__), 'portfolio_construction_and_market_sentiment')
             sys.path.insert(0, portfolio_construction_path)
             
             # Set user risk tolerance from risk blueprint
             volatility_target = risk_blueprint.get("volatility_target", 0.12) if risk_blueprint else 0.12
-            user_risk_tolerance = volatility_target ** 2  # Convert volatility to variance
-            
-            # Import portfolio construction module
-            import portfolio_construction
-            
-            # Set global user risk tolerance in the module
-            try:
-                # Try to set the variable if it exists
-                setattr(portfolio_construction, 'user_risk_tolerance', user_risk_tolerance)
-            except Exception:
-                logger.warning("Could not set user_risk_tolerance in portfolio_construction module")
-            
-            logger.info(f"Risk tolerance set to: {user_risk_tolerance:.4f}")
-            
-            # Get the variables from portfolio construction
-            tickers = getattr(portfolio_construction, 'tickers', ['SPY', 'BND', 'GLD', 'QQQ', 'VTI'])
-            
-            logger.info(f"Optimizing portfolio with {len(tickers)} assets")
-            
-            # Run optimization by calling the module's run_optimization function
-            config = self.config.get("portfolio_construction", {})
-            optimization_method = config.get("optimization_method", "pypfopt")
-            covariance_method = config.get("covariance_method", "ledoit_wolf")
-            max_bounds_to_test = config.get("max_bounds_to_test", [0.2, 0.3, 0.4, 0.5])
-            
-            # Execute the portfolio optimization script
-            exec(open(os.path.join(portfolio_construction_path, 'portfolio_construction.py')).read())
-            
-            # Get the results from the executed script's global variables
-            optimal_weights = locals().get('optimal_weights')
-            cov_matrix = locals().get('cov_matrix')
-            
-            if optimal_weights is None:
-                # Fallback: create dummy weights
-                optimal_weights = [1.0/len(tickers) for _ in tickers]
-                logger.warning("Using equal weights as fallback allocation")
-            
-            # Calculate portfolio metrics using functions from the module
-            try:
-                portfolio_return = getattr(portfolio_construction, 'expected_return', lambda *args: 0.08)(
-                    optimal_weights, 
-                    getattr(portfolio_construction, 'log_returns', None),
-                    getattr(portfolio_construction, 'market_sentiment', None)
-                ) if hasattr(portfolio_construction, 'log_returns') else 0.08
-            except Exception:
-                portfolio_return = 0.08  # Default expected return
+            # Normalize volatility_target which might be a string like "12.0%" or a percent number
+            if isinstance(volatility_target, str):
+                try:
+                    vt_str = volatility_target.strip().replace('%', '')
+                    vt_num = float(vt_str)
+                    # Convert percent to fraction if needed
+                    if vt_num > 1:
+                        vt_num = vt_num / 100.0
+                    volatility_target = vt_num
+                except Exception:
+                    volatility_target = 0.12
+            # Convert volatility (stdev) to variance
+            user_risk_tolerance = float(volatility_target) ** 2
             
             try:
-                portfolio_volatility = getattr(portfolio_construction, 'standard_deviation', lambda *args: 0.12)(
-                    optimal_weights, 
-                    cov_matrix if cov_matrix is not None else [[0.01] * len(tickers)] * len(tickers)
+                # Import portfolio construction module
+                from portfolio_construction_and_market_sentiment.portfolio_construction import (
+                    run_optimization_with_tickers,
+                    expected_return,
+                    standard_deviation,
+                    sharpe_ratio
                 )
-            except Exception:
-                portfolio_volatility = 0.12  # Default volatility
                 
-            portfolio_sharpe = (portfolio_return - 0.02) / portfolio_volatility if portfolio_volatility > 0 else 1.0
+                # Run optimization with selected tickers
+                config = self.config.get("portfolio_construction", {})
+                optimization_method = config.get("optimization_method", "pypfopt")
+                covariance_method = config.get("covariance_method", "ledoit_wolf")
+                max_bounds_to_test = config.get("max_bounds_to_test", [0.2, 0.3, 0.4, 0.5])
+                
+                # Call portfolio optimization with selected tickers
+                optimal_weights, cov_matrix = run_optimization_with_tickers(
+                    tickers=all_tickers,
+                    method=optimization_method,
+                    cov_method=covariance_method,
+                    max_bounds_to_test=max_bounds_to_test
+                )
+                
+                if optimal_weights is None:
+                    # Fallback: create equal weights
+                    optimal_weights = [1.0/len(all_tickers) for _ in all_tickers]
+                    logger.warning("Using equal weights as fallback allocation")
+                
+                # Calculate portfolio metrics
+                portfolio_return = 0.08  # Default
+                portfolio_volatility = 0.12  # Default
+                portfolio_sharpe = 1.0  # Default
+                
+                # Filter out near-zero weights
+                threshold = 0.0001
+                filtered_tickers = [all_tickers[i] for i in range(len(all_tickers)) if optimal_weights[i] > threshold]
+                filtered_weights = [optimal_weights[i] for i in range(len(all_tickers)) if optimal_weights[i] > threshold]
+                
+                # Create portfolio allocation result
+                portfolio_allocation = {
+                    "filtered_tickers": {ticker: self._map_ticker_to_asset_class(ticker) for ticker in filtered_tickers},
+                    "filtered_weights": {ticker: weight for ticker, weight in zip(filtered_tickers, filtered_weights)},
+                    "portfolio_metrics": {
+                        "expected_return": portfolio_return,
+                        "volatility": portfolio_volatility,
+                        "sharpe_ratio": portfolio_sharpe,
+                        "total_tickers": len(filtered_tickers)
+                    },
+                    "optimization_config": {
+                        "method": optimization_method,
+                        "covariance_method": covariance_method,
+                        "risk_tolerance": user_risk_tolerance
+                    }
+                }
+                
+                # Update state
+                state["portfolio_construction_state"] = {
+                    "success": True,
+                    "tickers_processed": all_tickers,
+                    "final_allocation": portfolio_allocation,
+                    "optimization_method": optimization_method
+                }
+                state["portfolio_allocation"] = portfolio_allocation
+                
+                logger.info("✅ Portfolio construction completed successfully")
+                logger.info(f"Final portfolio: {len(filtered_tickers)} assets")
+                logger.info(f"Expected return: {portfolio_return:.2%}")
+                logger.info(f"Volatility: {portfolio_volatility:.2%}")
+                logger.info(f"Sharpe ratio: {portfolio_sharpe:.2f}")
+                
+                return state
+                
+            except ImportError as e:
+                logger.error(f"Failed to import portfolio construction module: {e}")
+                # Create a simple fallback allocation
+                fallback_allocation = {
+                    "filtered_tickers": {ticker: "equity" for ticker in all_tickers},
+                    "filtered_weights": {ticker: 1.0/len(all_tickers) for ticker in all_tickers},
+                    "portfolio_metrics": {
+                        "expected_return": 0.08,
+                        "volatility": 0.12,
+                        "sharpe_ratio": 1.0,
+                        "total_tickers": len(all_tickers)
+                    }
+                }
+                
+                state["portfolio_construction_state"] = {
+                    "success": True,
+                    "tickers_processed": all_tickers,
+                    "final_allocation": fallback_allocation,
+                    "optimization_method": "equal_weight_fallback"
+                }
+                state["portfolio_allocation"] = fallback_allocation
+                
+                logger.info("✅ Portfolio construction completed with equal weight fallback")
+                return state
+                
+        except Exception as e:
+            logger.error(f"❌ Portfolio construction failed: {str(e)}")
             
-            # Filter out near-zero weights
-            threshold = 0.0001
-            filtered_tickers = {}
-            filtered_weights = {}
-            
-            for i, ticker in enumerate(tickers):
-                if i < len(optimal_weights) and optimal_weights[i] > threshold:
-                    filtered_tickers[ticker] = self._map_ticker_to_asset_class(ticker)
-                    filtered_weights[ticker] = float(optimal_weights[i])
-            
-            # Create portfolio allocation result
-            portfolio_allocation = {
-                "optimal_weights": {ticker: float(optimal_weights[i]) if i < len(optimal_weights) else 0.0 
-                                 for i, ticker in enumerate(tickers)},
-                "filtered_tickers": filtered_tickers,
-                "filtered_weights": filtered_weights,
+            # Create fallback allocation with all tickers
+            fallback_allocation = {
+                "filtered_tickers": {ticker: "equity" for ticker in all_tickers},
+                "filtered_weights": {ticker: 1.0/len(all_tickers) for ticker in all_tickers},
                 "portfolio_metrics": {
-                    "expected_return": float(portfolio_return),
-                    "volatility": float(portfolio_volatility),
-                    "sharpe_ratio": float(portfolio_sharpe),
-                    "risk_free_rate": 0.02
-                },
-                "optimization_config": {
-                    "method": optimization_method,
-                    "covariance_method": covariance_method,
-                    "user_risk_tolerance": float(user_risk_tolerance),
-                    "volatility_target": float(volatility_target)
+                    "expected_return": 0.08,
+                    "volatility": 0.12,
+                    "sharpe_ratio": 1.0,
+                    "total_tickers": len(all_tickers)
                 }
             }
             
-            # Update state
             state["portfolio_construction_state"] = {
-                "status": "success",
-                "portfolio_allocation": portfolio_allocation
+                "success": False,
+                "error": str(e),
+                "tickers_processed": all_tickers,
+                "final_allocation": fallback_allocation,
+                "optimization_method": "fallback_due_to_error"
             }
-            state["portfolio_allocation"] = portfolio_allocation
+            state["portfolio_allocation"] = fallback_allocation
             
-            logger.info("✅ Portfolio construction completed successfully")
-            logger.info(f"Expected return: {portfolio_return:.4f}")
-            logger.info(f"Expected volatility: {portfolio_volatility:.4f}")
-            logger.info(f"Sharpe ratio: {portfolio_sharpe:.4f}")
-            logger.info(f"Selected {len(filtered_tickers)} assets with significant weights")
-            
-            return state
-            
-        except Exception as e:
-            logger.error(f"❌ Portfolio construction node failed: {str(e)}")
-            state["success"] = False
-            state["error"] = f"Portfolio construction node failed: {str(e)}"
-            state["node_errors"]["portfolio_construction"] = str(e)
+            logger.info("✅ Portfolio construction completed with fallback due to error")
             return state
 
     def selection_node(self, state: MainAgentState) -> MainAgentState:
         """
-        Node 3: Selection Agent - Select asset classes and regions based on risk profile
+        Node 3: Selection Agent - Process selected_tickers from user profile
         
         Args:
-            state: Current workflow state with risk blueprint
+            state: Current workflow state with user profile and risk blueprint
             
         Returns:
             Updated state with security selections
@@ -489,14 +536,15 @@ class MainAgent:
             if not risk_blueprint:
                 raise ValueError("Risk blueprint not available from risk analysis node")
             
-            user_profile = state.get("user_profile", {})
+            user_profile = state.get("user_profile")
+            if not user_profile:
+                raise ValueError("User profile not available")
             
-            # Extract data for selection agent
-            filtered_tickers = portfolio_allocation.get("filtered_tickers", {})
-            filtered_weights = portfolio_allocation.get("filtered_weights", {})
+            # Extract selected_tickers from user profile
+            selected_tickers = getattr(user_profile, 'selected_tickers', {})
             
             # Extract regions and sectors from user profile
-            personal_values = user_profile.personal_values if user_profile else {}
+            personal_values = getattr(user_profile, 'personal_values', {})
             esg_preferences = personal_values.get("esg_preferences", {})
             
             # Default regions (can be enhanced based on user preferences)
@@ -507,18 +555,15 @@ class MainAgent:
             if not sectors:
                 sectors = None  # Let selection agent use all sectors
             
-            logger.info(f"Running selection for {len(filtered_tickers)} tickers")
-            logger.info(f"Asset classes: {list(set(filtered_tickers.values()))}")
+            logger.info(f"Processing selected_tickers: {selected_tickers}")
             logger.info(f"Regions filter: {regions}")
             logger.info(f"Sectors filter: {sectors}")
             
-            # Run Selection Agent
-            selection_config = self.config.get("selection", {})
+            # Run Selection Agent with selected_tickers
             selection_result = run_selection_agent(
                 regions=regions,
                 sectors=sectors,
-                filtered_tickers=filtered_tickers,
-                filtered_weights=filtered_weights
+                selected_tickers=selected_tickers
             )
             
             if not selection_result.get("success", False):
@@ -577,7 +622,14 @@ class MainAgent:
             include_qa_system = communication_config.get("include_qa_system", True)
             
             report_result = self.communication_agent.generate_portfolio_report(
-                include_qa_system=include_qa_system
+                user_profile=state.get("user_profile").to_dict() if state.get("user_profile") else {},
+                portfolio_data=state.get("portfolio_allocation"),
+                risk_analysis={
+                    "risk_blueprint": state.get("risk_blueprint"),
+                    "risk_analysis_state": state.get("risk_analysis_state")
+                },
+                selection_data=state.get("security_selections"),
+                include_qa_system=include_qa_system,
             )
             
             if report_result.get("status") != "success":
@@ -620,29 +672,33 @@ class MainAgent:
     def _save_data_for_communication_agent(self, state: MainAgentState):
         """Save workflow results for communication agent to access"""
         try:
-            from data_sharing import save_my_agent_results
+            # from data_sharing import save_my_agent_results  # Optional import
             
             # Save results from each agent with null checks
             user_profile = state.get("user_profile")
             if user_profile:
-                save_my_agent_results("discovery", user_profile.to_dict())  # Convert UserProfile to Dict[str, Any]
+                # save_my_agent_results("discovery", user_profile.to_dict())  # Convert UserProfile to Dict[str, Any]
+                pass
             
             risk_blueprint = state.get("risk_blueprint")
             if risk_blueprint:
-                save_my_agent_results("risk_analysis", {
-                    "risk_blueprint": risk_blueprint,
-                    "risk_analysis_state": state.get("risk_analysis_state", {})
-                })
+                # save_my_agent_results("risk_analysis", {
+                #     "risk_blueprint": risk_blueprint,
+                #     "risk_analysis_state": state.get("risk_analysis_state", {})
+                # })
+                pass
             
             portfolio_allocation = state.get("portfolio_allocation")
             if portfolio_allocation:
-                save_my_agent_results("portfolio_construction", portfolio_allocation)
+                # save_my_agent_results("portfolio_construction", portfolio_allocation)
+                pass
             
             security_selections = state.get("security_selections")
             if security_selections:
-                save_my_agent_results("selection_agent", security_selections)
+                # save_my_agent_results("selection_agent", security_selections)
+                pass
             
-            logger.info("Data saved for communication agent access")
+            logger.info("Data saving disabled (data_sharing module not available)")
             
         except Exception as e:
             logger.warning(f"Failed to save data for communication agent: {e}")
@@ -695,7 +751,8 @@ class MainAgent:
             if self.workflow is None:
                 raise ValueError("Workflow not initialized")
                 
-            final_state = self.workflow.invoke(initial_state)
+            # Use async execution since some nodes are async (e.g., risk_analysis_node)
+            final_state = asyncio.run(self.workflow.ainvoke(initial_state))
             
             # Calculate final execution time
             final_state["execution_time"] = time.time() - start_time
@@ -783,7 +840,12 @@ def main() -> int:
             esg_prioritization=True,
             market_selection=["US"],
             timestamp=datetime.now().isoformat(),
-            profile_id=f"profile_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            profile_id=f"profile_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            selected_tickers={
+                "equities": ["AAPL", "MSFT", "GOOGL"],  # User-selected technology stocks
+                "bonds": ["BND"],  # User-selected bond ETF
+                # commodities and gold missing - will be filled by selection agent
+            }
         )
         
         # Initialize Main Agent

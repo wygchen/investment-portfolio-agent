@@ -11,12 +11,9 @@ import os
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from langchain_ibm import WatsonxLLM
-from langgraph.graph import Graph, END
-from langgraph.graph.graph import CompiledGraph
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.state import CompiledStateGraph
 import logging
-
-# Import our data sharing utilities
-from data_sharing import get_user_profile_data, get_other_agent_results, save_my_agent_results
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -57,8 +54,8 @@ class CommunicationAgent:
     def setup_langgraph(self):
         """Setup LangGraph workflow for report generation"""
         try:
-            # Create workflow graph
-            workflow = Graph()
+            # Create workflow state graph
+            workflow = StateGraph(dict)
             
             # Add nodes for different report sections
             workflow.add_node("analyze_profile", self.analyze_user_profile)
@@ -69,15 +66,13 @@ class CommunicationAgent:
             workflow.add_node("compile_report", self.compile_final_report)
             
             # Define workflow edges
+            workflow.add_edge(START, "analyze_profile")
             workflow.add_edge("analyze_profile", "generate_executive_summary")
             workflow.add_edge("generate_executive_summary", "explain_allocation")
             workflow.add_edge("explain_allocation", "explain_selections")
             workflow.add_edge("explain_selections", "generate_risk_commentary")
             workflow.add_edge("generate_risk_commentary", "compile_report")
             workflow.add_edge("compile_report", END)
-            
-            # Set entry point
-            workflow.set_entry_point("analyze_profile")
             
             # Compile the graph
             self.workflow = workflow.compile()
@@ -408,7 +403,15 @@ class CommunicationAgent:
             "Consider tax-loss harvesting opportunities"
         ]
     
-    def generate_portfolio_report(self, include_qa_system: bool = True) -> Dict[str, Any]:
+    def generate_portfolio_report(
+        self,
+        *,
+        user_profile: Dict[str, Any],
+        portfolio_data: Optional[Dict[str, Any]] = None,
+        risk_analysis: Optional[Dict[str, Any]] = None,
+        selection_data: Optional[Dict[str, Any]] = None,
+        include_qa_system: bool = True,
+    ) -> Dict[str, Any]:
         """
         Main method to generate comprehensive portfolio report
         
@@ -419,12 +422,7 @@ class CommunicationAgent:
             Dict containing the complete report and Q&A responses
         """
         try:
-            # Gather all available data
-            user_profile = get_user_profile_data()
-            portfolio_data = get_other_agent_results("portfolio_construction")
-            risk_analysis = get_other_agent_results("risk_analysis")
-            selection_data = get_other_agent_results("selection_agent")
-            
+            # Validate required data
             if not user_profile:
                 return {
                     "error": "No user profile data available. Please complete assessment first.",
@@ -436,7 +434,7 @@ class CommunicationAgent:
                 "user_profile": user_profile,
                 "portfolio_data": portfolio_data or {},
                 "risk_analysis": risk_analysis or {},
-                "selection_data": selection_data or {}
+                "selection_data": selection_data or {},
             }
             
             # Run LangGraph workflow if available
@@ -455,9 +453,6 @@ class CommunicationAgent:
             if include_qa_system:
                 qa_system = self.setup_qa_system(initial_state)
                 report["qa_system"] = qa_system
-            
-            # Save report results
-            save_my_agent_results("communication_agent", report)
             
             return {
                 "status": "success",
@@ -630,55 +625,24 @@ class CommunicationAgent:
             return f"Unable to generate answer: {str(e)}"
 
 
-# Convenience functions for API integration
-def generate_investment_report() -> Dict[str, Any]:
-    """
-    Quick function to generate investment report
-    
-    Usage:
-    from communication_agent import generate_investment_report
-    report = generate_investment_report()
-    """
+# Convenience functions (kept for manual testing without external deps)
+def answer_question(question: str, context: Dict[str, Any]) -> str:
     agent = CommunicationAgent()
-    return agent.generate_portfolio_report()
-
-
-def answer_question(question: str) -> str:
-    """
-    Quick function to answer portfolio questions
-    
-    Usage:
-    from communication_agent import answer_question
-    answer = answer_question("Why was this allocation chosen?")
-    """
-    agent = CommunicationAgent()
-    
-    # Get context data
-    context = {
-        "user_profile": get_user_profile_data(),
-        "portfolio_data": get_other_agent_results("portfolio_construction"),
-        "risk_analysis": get_other_agent_results("risk_analysis")
-    }
-    
     return agent.answer_portfolio_question(question, context)
 
 
 # Example usage and testing
 if __name__ == "__main__":
-    # Test the communication agent
+    # Minimal manual test with dummy data
     agent = CommunicationAgent()
-    
+    dummy_profile = {
+        "profile_id": "test_profile",
+        "risk_tolerance": "medium",
+        "time_horizon": 10,
+        "goals": [{"description": "Retirement"}],
+        "income": 80000,
+        "personal_values": {"esg_preferences": {}}
+    }
     print("Testing Communication Agent...")
-    report = agent.generate_portfolio_report()
-    
-    if report.get("status") == "success":
-        print("✅ Report generated successfully!")
-        print(f"Report title: {report['report']['report_title']}")
-        print(f"Generated: {report['report']['generated_date']}")
-    else:
-        print(f"❌ Report generation failed: {report.get('error')}")
-    
-    # Test Q&A system
-    print("\nTesting Q&A system...")
-    answer = answer_question("Why was this specific allocation chosen for my portfolio?")
-    print(f"Sample answer: {answer[:200]}...")
+    report = agent.generate_portfolio_report(user_profile=dummy_profile)
+    print(report.get("status"))

@@ -11,13 +11,13 @@ Main functions:
 
 from datetime import datetime
 import os
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any
 from dataclasses import dataclass, asdict, field
 import json
 import logging
 
 # Optional LLM support (WatsonX)
-from .watsonx_utils import create_watsonx_llm
+from watsonx_utils import create_watsonx_llm
 from langchain_core.messages import HumanMessage, SystemMessage
 
 
@@ -50,8 +50,8 @@ class UserProfile:
     profile_id: str
 
     # Parsed from free-text specific assets via LLM
-    selected_tickers: List[str] = field(default_factory=list)
-    selected_asset_classes: List[str] = field(default_factory=list)
+    # Mapping of asset class -> list of tickers
+    selected_tickers: Dict[str, List[str]] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert dataclass to dictionary"""
@@ -72,15 +72,14 @@ def process_frontend_data(frontend_data: Dict[str, Any]) -> UserProfile:
     profile_id = f"profile_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     # TODO: Add more robust unique ID generation if needed to support profile update function and use PostgreSQL to store profiles.
     
-    # Parse specific assets (free-text) via LLM into tickers and asset classes
+    # Parse specific assets (free-text) via LLM into mapping of asset class -> tickers
     specific_assets_text = str(frontend_data.get('specificAssets', '') or '').strip()
-    parsed_tickers: List[str] = []
-    parsed_asset_classes: List[str] = []
+    parsed_selected: Dict[str, List[str]] = {}
     if specific_assets_text:
         try:
-            parsed_tickers, parsed_asset_classes = llm_parse_specific_assets(specific_assets_text)
+            parsed_selected = llm_parse_specific_assets(specific_assets_text)
         except Exception:
-            parsed_tickers, parsed_asset_classes = [], []
+            parsed_selected = {}
 
     # Create and return UserProfile dataclass
     user_profile = UserProfile(
@@ -96,8 +95,7 @@ def process_frontend_data(frontend_data: Dict[str, Any]) -> UserProfile:
         market_selection=frontend_data.get('marketSelection', []),
         timestamp=datetime.now().isoformat(),
         profile_id=profile_id,
-        selected_tickers=parsed_tickers,
-        selected_asset_classes=parsed_asset_classes
+        selected_tickers=parsed_selected
     )
     
     return user_profile
@@ -181,17 +179,16 @@ def generate_user_profile(frontend_data: Dict[str, Any]) -> Dict[str, Any]:
 # LLM parsing utilities
 # =====================================
 # Supported sets are lowercase to align with normalized parsing output
-SUPPORTED_ASSET_CLASSES = {"bonds", "equities", "crypto", "reits", "commodities"}
+SUPPORTED_ASSET_CLASSES = {"bonds", "equities", "gold", "commodities"}
 SUPPORTED_REGIONS = {"us", "hk"}
 
 
-def llm_parse_specific_assets(input_text: str) -> Tuple[List[str], List[str]]:
+def llm_parse_specific_assets(input_text: str) -> Dict[str, List[str]]:
     """
-    Use LLM to parse free-text specific assets into yfinance tickers and unique asset classes.
+    Use LLM to parse free-text specific assets into a mapping of
+    asset_class -> list of yfinance tickers.
 
-    Returns two lists:
-    - tickers: list of yfinance symbols of valid tickers (US and HK only)
-    - asset_classes: unique asset classes among {bonds, equities, crypto, reits, commodities}
+    Returns: {asset_class: [tickers...]}
     """
 
     logger.info("llm_parse_specific_assets: start; input='%s'", input_text)
@@ -214,13 +211,13 @@ Task:
    - US equities/ETFs: e.g., AAPL, SPY; bonds via ETFs like BND, TLT; commodities via ETFs like GLD.
    - HK equities: append .HK, e.g., 0700.HK for Tencent.
    - Crypto: use pairs like BTC-USD, ETH-USD (US only).
-3) Determine which of these asset classes are present: bonds, equities, crypto, reits, commodities.
-4) Output STRICT JSON with two fields only:
-   {{"tickers": ["..."], "asset_classes": ["..."]}}
-   - Do not include coding bracket ```
-   - Do not include explanations.
-   - Tickers must be unique and valid.
-   - asset_classes must be lowercase and unique, subset of [bonds, equities, crypto, reits, commodities].
+3) Classify each symbol into one of: bonds, equities, gold, commodities. If it cannot be classified into the above, skip the symbol.
+4) Output STRICT JSON of a single object whose keys are asset classes and values are arrays of unique tickers. Example:
+   {{"equities": ["AAPL", "SPY"], "bonds": ["BND"], "gold": ["GLD"]}}
+   - Include only classes that have at least one ticker.
+   - Keys must be lowercase and a subset of [bonds, equities, gold, commodities].
+   - Tickers must be valid and unique.
+   - Do not include code fences or explanations.
 
 Input: {input_text}
 """.strip()
@@ -256,19 +253,22 @@ Input: {input_text}
                 logger.error("Fallback JSON parse failed: %s", e2)
                 parsed = {}
 
-    tickers = parsed.get("tickers", []) if isinstance(parsed, dict) else []
-    asset_classes = parsed.get("asset_classes", []) if isinstance(parsed, dict) else []
+    # Convert parsed payload to mapping {asset_class: [tickers]}
+    result: Dict[str, List[str]] = {}
+    if isinstance(parsed, dict):
+        for k, v in parsed.items():
+            if not isinstance(k, str):
+                continue
+            cls = k.strip().lower()
+            if cls not in SUPPORTED_ASSET_CLASSES:
+                continue
+            tickers_list = v if isinstance(v, list) else []
+            normalized = _normalize_and_filter_tickers(tickers_list)
+            if normalized:
+                result[cls] = normalized
 
-    # Post-validation and normalization
-    tickers = _normalize_and_filter_tickers(tickers)
-    asset_classes = _normalize_and_filter_asset_classes(asset_classes)
-
-    # Ensure asset classes implied by tickers are included (best effort)
-    implied_classes = _infer_asset_classes_from_tickers(tickers)
-    asset_classes = sorted(list({*asset_classes, *implied_classes}))
-
-    logger.info("llm_parse_specific_assets: done; tickers=%s asset_classes=%s", tickers, asset_classes)
-    return tickers, asset_classes
+    logger.info("llm_parse_specific_assets: done; mapping=%s", result)
+    return result
 
 
 def _normalize_and_filter_tickers(items: List[Any]) -> List[str]:
@@ -281,15 +281,15 @@ def _normalize_and_filter_tickers(items: List[Any]) -> List[str]:
         if not sym:
             continue
         # HK tickers like 0700.HK
-        if sym.endswith(".HK") and len(sym) >= 5:
+        if sym.endswith('.HK') and len(sym) >= 5:
             results.append(sym)
             continue
         # Crypto pairs like BTC-USD
-        if "-USD" in sym and sym.endswith("-USD") and len(sym) >= 8:
+        if '-USD' in sym and sym.endswith('-USD') and len(sym) >= 8:
             results.append(sym)
             continue
         # Plain US ticker heuristic: letters, numbers, "." for classes, up to ~6
-        if all(ch.isalnum() or ch == "." for ch in sym) and 1 <= len(sym) <= 6:
+        if all(ch.isalnum() or ch == '.' for ch in sym) and 1 <= len(sym) <= 6:
             results.append(sym)
     # Deduplicate preserving order
     seen = set()
@@ -315,17 +315,18 @@ def _normalize_and_filter_asset_classes(items: List[Any]) -> List[str]:
 def _infer_asset_classes_from_tickers(tickers: List[str]) -> List[str]:
     inferred: set = set()
     for t in tickers:
-        if t.endswith("-USD"):
-            inferred.add("crypto")
-        elif t.endswith(".HK") or t.isalpha() or "." in t:
-            # Simple heuristic: many ETFs map to equities/REITs/commodities/bonds
+        if t.endswith('-USD'):
+            # Note: crypto not in supported classes anymore, skip
+            continue
+        elif t.endswith('.HK') or t.isalpha() or '.' in t:
+            # Simple heuristic: many ETFs map to equities/gold/commodities/bonds
             # Identify a few common ones
-            if t in {"VNQ", "IYR", "SCHH"}:
-                inferred.add("reits")
-            elif t in {"GLD", "SLV", "DBC", "GSG", "PDBC"}:
-                inferred.add("commodities")
-            elif t in {"BND", "AGG", "TLT", "IEF", "BNDW"}:
-                inferred.add("bonds")
+            if t in {'GLD', 'IAU', 'SGOL'}:
+                inferred.add('gold')
+            elif t in {'SLV', 'DBC', 'GSG', 'PDBC', 'DJP'}:
+                inferred.add('commodities')
+            elif t in {'BND', 'AGG', 'TLT', 'IEF', 'BNDW'}:
+                inferred.add('bonds')
             else:
-                inferred.add("equities")
+                inferred.add('equities')
     return sorted(list(inferred & SUPPORTED_ASSET_CLASSES))

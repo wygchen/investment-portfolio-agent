@@ -95,7 +95,7 @@ TONE: Professional, analytical, confident, and educational. Explain complex conc
         Returns:
             Dictionary with risk analysis results
         """
-        assessment = context.user_assessment
+        assessment = self._normalize_user_assessment(context.user_assessment)
         
         # Step 1: Calculate comprehensive financial ratios using the engine
         ratio_results = self.ratio_engine.calculate_all_ratios(assessment)
@@ -203,6 +203,12 @@ TONE: Professional, analytical, confident, and educational. Explain complex conc
         net_worth = assessment.get('net_worth', 0)
         age = assessment.get('age', 35)
         dependents = assessment.get('dependents', 0)
+        
+        # Initialize factor contributions to safe defaults
+        income_score = 0.0
+        net_worth_score = 0.0
+        savings_score = 0.0
+        debt_score = 0.0
         
         # Use enhanced ratio analysis if available
         if ratio_results and "financial_stability_score" in ratio_results:
@@ -641,17 +647,14 @@ RISK FACTORS TO MONITOR:
         if not base_validation["valid"]:
             return base_validation
         
-        assessment = context.user_assessment
-        required_fields = ['age', 'income', 'net_worth', 'risk_tolerance', 'time_horizon']
+        assessment = self._normalize_user_assessment(context.user_assessment)
+        required_fields = ['income', 'time_horizon']
         
         for field in required_fields:
             if field not in assessment or assessment[field] is None:
                 return {"valid": False, "error": f"Missing required field: {field}"}
         
-        # Validate field ranges
-        if not (18 <= assessment['age'] <= 100):
-            return {"valid": False, "error": "Age must be between 18 and 100"}
-        
+        # Validate field ranges (age optional; skip age validation if missing)
         if not (1 <= assessment['risk_tolerance'] <= 10):
             return {"valid": False, "error": "Risk tolerance must be between 1 and 10"}
         
@@ -659,3 +662,45 @@ RISK FACTORS TO MONITOR:
             return {"valid": False, "error": "Time horizon must be at least 1 year"}
         
         return {"valid": True}
+
+    def _normalize_user_assessment(self, raw: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize various UserProfile shapes into the fields this agent expects."""
+        normalized = dict(raw or {})
+        # Map monthly contribution from savings_rate (treated as monthly savings amount)
+        if 'monthly_contribution' not in normalized:
+            if 'savings_rate' in normalized:
+                try:
+                    normalized['monthly_contribution'] = float(normalized.get('savings_rate') or 0)
+                except Exception:
+                    normalized['monthly_contribution'] = 0.0
+            else:
+                normalized['monthly_contribution'] = 0.0
+        # Ensure income present
+        normalized['income'] = float(normalized.get('income') or 0)
+        # Provide defaults for fields not present in UserProfile
+        if 'net_worth' not in normalized or normalized['net_worth'] is None:
+            normalized['net_worth'] = 0
+        if 'dependents' not in normalized or normalized['dependents'] is None:
+            normalized['dependents'] = 0
+        if 'target_amount' not in normalized or normalized['target_amount'] is None:
+            normalized['target_amount'] = 0
+        # Normalize risk_tolerance to numeric 1-10 scale if provided as string
+        rt = normalized.get('risk_tolerance')
+        if isinstance(rt, str):
+            mapping = {'low': 3, 'medium': 5, 'moderate': 5, 'high': 8}
+            normalized['risk_tolerance'] = mapping.get(rt.strip().lower(), 5)
+        elif isinstance(rt, (int, float)):
+            normalized['risk_tolerance'] = int(rt)
+        else:
+            normalized['risk_tolerance'] = 5
+        # Normalize time_horizon
+        try:
+            normalized['time_horizon'] = int(normalized.get('time_horizon') or 10)
+        except Exception:
+            normalized['time_horizon'] = 10
+        # Age optional default
+        try:
+            normalized['age'] = int(normalized.get('age') or 35)
+        except Exception:
+            normalized['age'] = 35
+        return normalized
