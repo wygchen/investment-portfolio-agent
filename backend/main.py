@@ -18,6 +18,7 @@ from datetime import datetime
 from profile_processor_agent import generate_user_profile
 # Import main agent for workflow execution
 from main_agent import MainAgent
+from market_news_agent.market_sentiment import get_yahoo_news_description
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -60,7 +61,6 @@ class FrontendAssessmentData(BaseModel):
     values: ValuesData = ValuesData()  # Updated to use structured model
     esgPrioritization: bool = False
     marketSelection: List[str] = []
-
 
 @app.get("/")
 async def root():
@@ -132,6 +132,14 @@ async def validate_assessment(assessment_data: FrontendAssessmentData):
     except Exception as e:
         logger.error(f"Error validating assessment: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error validating assessment: {str(e)}")
+
+@app.post("/api/get-news")
+async def get_news(ticker: str):
+    """
+    Get news data for a given ticker
+    """
+    news_data = get_yahoo_news_description(ticker, max_articles=5)
+    return {"news": news_data}
 
 @app.post("/api/ask-question")
 async def ask_portfolio_question(question_data: Dict[str, Any]):
