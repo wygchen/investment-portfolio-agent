@@ -13,5 +13,5 @@ class MarketSentiment:
 
 # class NewsData(BaseModel):
 #     """Model for news data"""
-#     news: List[Dict[str, Any]] = [] # time as key, heading and source as value
+#     news_list: List[Dict[str, Any]] = [] # time as key, heading and source as value
 #     hotnews_summary: str = ""
