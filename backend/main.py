@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 from profile_processor import generate_user_profile
 # Import report generator for PDF testing
 from report_generator import UnifiedReportGenerator
+from market_news_agent.market_sentiment import get_yahoo_news_description
 
 # Try to import main agent - fallback if dependencies missing
 try:
@@ -180,6 +181,34 @@ async def validate_assessment(assessment_data: FrontendAssessmentData):
     except Exception as e:
         logger.error(f"Error validating assessment: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error validating assessment: {str(e)}")
+
+@app.post("/api/get-news")
+async def get_news(ticker: str):
+    """
+    Get news data for a given ticker
+    """
+    news_data = get_yahoo_news_description(ticker, max_articles=5)
+    return {"news": news_data}
+    # Example JSON response structure for frontend reference:
+    # {
+    #   "news": {
+    #     "news_list": [
+    #       {
+    #         "2024-01-15T10:30:00Z": {
+    #           "heading": "Company reports strong Q4 earnings",
+    #           "source": "Reuters"
+    #         }
+    #       },
+    #       {
+    #         "2024-01-15T09:15:00Z": {
+    #           "heading": "Analyst upgrades stock to buy rating",
+    #           "source": "Bloomberg"
+    #         }
+    #       }
+    #     ],
+    #     "hotnews_summary": "Recent news shows positive sentiment with strong earnings and analyst upgrades driving investor confidence."
+    #   }
+    # }
 
 @app.post("/api/ask-question")
 async def ask_portfolio_question(question_data: Dict[str, Any]):
