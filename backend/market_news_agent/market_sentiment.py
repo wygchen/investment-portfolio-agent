@@ -1,302 +1,241 @@
-import pandas as pd
-import yfinance as yf
-from ddgs import DDGS
-from langchain_ibm import WatsonxLLM
-from textblob import TextBlob
 import os
-from dataclasses import asdict
-from market_sentiment_types import MarketSentiment
+import requests
+import json
+import re
+from dotenv import load_dotenv
+from typing import Any, Dict
 
-"""
-# Debug flag: set environment variable MARKET_SENTIMENT_DEBUG=1 to print raw LLM responses
-DEBUG_LLM = os.getenv("MARKET_SENTIMENT_DEBUG", "0") == "1"
-"""
 
-# Get news from yahoofinance and analyze with watsonx LLM
-def get_yahoo_news_description(ticker_symbol, max_articles=45):
+load_dotenv()
+
+
+def get_iam_token(api_key: str) -> str:
+    """Exchange an IBM Cloud API key for an IAM access token."""
+    resp = requests.post(
+        "https://iam.cloud.ibm.com/identity/token",
+        data={"apikey": api_key, "grant_type": "urn:ibm:params:oauth:grant-type:apikey"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json().get("access_token", "")
+
+
+def call_watsonx_deployment(deployment_url: str, api_token: str, prompt: str) -> Dict[str, Any]:
+    """Call a watsonx deployment (non-streaming) and return the parsed JSON-like output.
+
+    The model is expected to return JSON-like text using [[ and ]] as braces (legacy behavior
+    in this codebase). We try to clean and parse it into a Python object.
     """
-    Extract news from Yahoo Finance and return as a descriptive news string
-    
-    Args:
-        ticker_symbol: Stock ticker symbol (e.g., "TSLA")
-        max_articles: Maximum number of articles to include (default: 3)
-    
-    Returns:
-        String describing the latest news for the ticker
-    """
+    headers = {"Content-Type": "application/json", "Authorization": "Bearer " + api_token}
+    payload = {"messages": [{"role": "user", "content": prompt}]}
+
+    resp = requests.post(deployment_url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
+
+    result = None
+    model_output = None
     try:
-        # Get ticker data
-        ticker = yf.Ticker(ticker_symbol)
-        
-        # Fetch news articles
-        news_articles = ticker.news
-        
-        if not news_articles:
-            return f"No recent news found for {ticker_symbol}"
-        
-        # Build descriptive news string
-        news_description = f"Recent news for {ticker_symbol}: "
-        articles_list = []
-        
-        for i, article in enumerate(news_articles[:max_articles]):
-            headline = article.get('title', '').strip()
-            summary = article.get('summary', '').strip() or article.get('content', '').strip()
-            publisher = article.get('publisher', 'Unknown Source')
-            
-            if headline:
-                article_desc = f"'{headline}'"
-                if summary:
-                    article_desc += f" - {summary[:100]}..."  # Truncate long summaries
-                articles_list.append(article_desc)
-        
-        if not articles_list:
-            return f"No readable news headlines found for {ticker_symbol}"
-        
-        # Combine all articles into one descriptive string
-        news_description += ". ".join(articles_list)
-        
-        return news_description
-        
-    except Exception as e:
-        return f"Error fetching news for {ticker_symbol}: {str(e)}"
+        result = resp.json()
+    except ValueError:
+        # If response is plain text (for example an SSE/streamed response), try to
+        # extract model text fragments from the stream. IBM watsonx streaming often
+        # returns server-sent events with lines like:
+        # id: 1\nevent: message\ndata: {"choices": [{"index": 0, "delta": {"content": "..."}}]}
+        raw = resp.text
 
-# Setup Watsonx LLM
-llm = WatsonxLLM(
-    model_id="ibm/granite-3-3-8b-instruct",
-    project_id="9fb38a1d-5fae-47c2-a1a1-780e63b953f7",
-    apikey="0VrXkis1OeScydFGNiufjJItYgNtxKW7RXbY7ODBzp7j",
-    url="https://us-south.ml.cloud.ibm.com",
-    params={
-        "decoding_method": "greedy",
-        "max_new_tokens": 150,
-        "temperature": 0.1,
-        "repetition_penalty": 1.1
-    }
-)
+        fragments: list[str] = []
 
-
-def watsonx_sentiment_analysis(text: str, return_label: bool = False):
-    """
-    Use Watsonx LLM to classify sentiment of a text.
-
-    By default returns a numeric score: 1.0 (Positive), -1.0 (Negative), 0.0 (Neutral)
-    If return_label=True it returns a single-word string: 'Positive', 'Negative', or 'Neutral'.
-    """
-    prompt = f"""
-    Analyze the sentiment of the following financial news text.
-    Respond with exactly ONE word only: Positive, Negative, or Neutral. Do not include any explanation or extra text.
-    Text: {text}
-    """
-
-    # Try several call styles to accommodate different LLM wrappers
-    response = None
-    try:
-        # LangChain-style: generate(prompts=[...])
-        response = llm.generate(prompts=[prompt])
-    except TypeError:
-        try:
-            # Some wrappers accept a single prompt keyword
-            response = llm.generate(prompt=prompt)
-        except Exception:
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            payload_text = line[5:].strip()
             try:
-                # Some LLMs are callable
-                response = llm(prompt)
+                obj = json.loads(payload_text)
             except Exception:
-                response = None
+                # Not JSON inside data: line, skip
+                continue
 
-    label = ""
+            # If the payload contains incremental choices/deltas, collect 'content'
+            choices = obj.get("choices") if isinstance(obj, dict) else None
+            if isinstance(choices, list):
+                for choice in choices:
+                    delta = choice.get("delta") or {}
+                    if isinstance(delta, dict):
+                        content = delta.get("content")
+                        if isinstance(content, str):
+                            fragments.append(content)
 
-    """
-    # Parse different possible response shapes
-    if DEBUG_LLM:
-        print("[DEBUG] Raw LLM response:", response)
-    """
-    
-    if isinstance(response, dict) and 'results' in response:
-        # Original IBM style in this repo
-        label = response['results'][0].get('generated_text', '').strip().lower()
-    elif hasattr(response, 'generations'):
-        # LangChain LLMResult: .generations -> List[List[Generation]] if IBM style failed
-        try:
-            gens = response.generations
-            if gens and gens[0]:
-                # Generation object may have .text or .generation_text
-                gen0 = gens[0][0]
-                label = getattr(gen0, 'text', None) or getattr(gen0, 'generation_text', '')
-                label = label.strip().lower()
-        except Exception:
-            label = ''
-    elif isinstance(response, str):
-        label = response.strip().lower()
-    elif response is None:
-        label = ''
-    else:
-        # Fallback: try to stringify and find keywords
-        label = str(response).strip().lower()
-
-    # If label is empty, use a lightweight keyword heuristic as a fallback
-    if not label:
-        # Very small heuristic-based fallback if LLM unavailable or failed
-        low_text = text.lower()
-        positive_keywords = ['gain', 'up', 'rise', 'positive', 'beat', 'outperform', 'bull']
-        negative_keywords = ['loss', 'down', 'fall', 'drop', 'negative', 'miss', 'bear']
-        pos = any(k in low_text for k in positive_keywords)
-        neg = any(k in low_text for k in negative_keywords)
-        if pos and not neg:
-            return 1.0
-        elif neg and not pos:
-            return -1.0
+        # Join fragments into a single model output if any were found
+        if fragments:
+            model_output = "".join(fragments)
         else:
-            return 0.0
+            # Fallback: return full raw text as a helpful error
+            raise RuntimeError(f"Failed to decode JSON response: {raw}")
 
-    # Normalize label to single word
-    label_word = None
-    if "positive" in label:
-        label_word = "Positive"
-    elif "negative" in label:
-        label_word = "Negative"
-    elif "neutral" in label:
-        label_word = "Neutral"
+    # Extract model output text from common response shapes when not streaming
+    if model_output is None:
+        # Handle 'choices' response shape (common for some LLM APIs)
+        if isinstance(result, dict) and "choices" in result and isinstance(result["choices"], list):
+            fragments = []
+            for choice in result["choices"]:
+                # Try common locations for incremental content
+                content = None
+                if isinstance(choice, dict):
+                    msg = choice.get("message") or {}
+                    if isinstance(msg, dict):
+                        content = msg.get("content")
+                    if content is None:
+                        delta = choice.get("delta") or {}
+                        if isinstance(delta, dict):
+                            content = delta.get("content")
+                    if content is None:
+                        # Older shapes may have 'text' or 'generated_text'
+                        content = choice.get("text") or choice.get("generated_text")
+                if isinstance(content, str):
+                    fragments.append(content)
 
-    # If still not recognized, use heuristic from original fallback
-    if label_word is None:
-        low_text = text.lower()
-        positive_keywords = ['gain', 'up', 'rise', 'positive', 'beat', 'outperform', 'bull']
-        negative_keywords = ['loss', 'down', 'fall', 'drop', 'negative', 'miss', 'bear']
-        pos = any(k in low_text for k in positive_keywords)
-        neg = any(k in low_text for k in negative_keywords)
-        if pos and not neg:
-            label_word = "Positive"
-        elif neg and not pos:
-            label_word = "Negative"
-        else:
-            label_word = "Neutral"
+            if fragments:
+                model_output = "".join(fragments)
+        # Fallback to other shapes
+        if model_output is None:
+            if isinstance(result, dict) and "results" in result and len(result["results"]) > 0:
+                model_output = result["results"][0].get("generated_text", "")
+            else:
+                model_output = result.get("generated_text", str(result))
 
-    if return_label:
-        return label_word
+    # Clean model output that uses [[ ... ]] for braces and single quotes
+    clean_text = re.sub(r"\[\[", "{", model_output)
+    clean_text = re.sub(r"\]\]", "}", clean_text)
+    # Some models stream single quotes or escaped sequences; normalize to double quotes
+    clean_text = clean_text.replace("'", '"')
 
-    # Map to numeric for backward compatibility
-    if label_word == "Positive":
-        return 1.0
-    elif label_word == "Negative":
-        return -1.0
-    else:
-        return 0.0
-
-# 2. News Sentiment (via DuckDuckGo Search + watsonx)
-def get_news_sentiment(ticker, num_results=45):
-    """Fetch recent news via DuckDuckGo and compute sentiment using TextBlob polarity.
-
-    Returns the average polarity in [-1.0, 1.0].
-    """
-    ddgs = DDGS()
-    query = f"{ticker} stock news"
-    results = ddgs.text(query, max_results=num_results)
-
-    scores = []
-    for r in results:
-        text = f"{r.get('title','')} {r.get('body','')}"
-        try:
-            tb = TextBlob(text)
-            # TextBlob.polarity is in [-1.0, 1.0]
-            score = float(tb.sentiment.polarity)
-        except Exception:
-            # fallback to neutral if TextBlob fails
-            score = 0.0
-        scores.append(score)
-
-    return sum(scores) / len(scores) if scores else 0.0
-
-
-# 3. Fear & Greed Index Proxy 
-def calculate_fear_greed_index(ticker):
-    data = yf.download(ticker, period="6mo", interval="1d")
-    data["Change"] = data["Close"].pct_change()
-
-    delta = data["Close"].diff()
-    gain = delta.clip(lower=0).rolling(14).mean()
-    loss = -delta.clip(upper=0).rolling(14).mean()
-    rs = gain / loss
-    data["RSI"] = 100 - (100 / (1 + rs))
-
-    latest_rsi = data["RSI"].iloc[-1]
-    latest_vix = get_cboe_vix()
-
-    rsi_score = (latest_rsi - 50) / 50
-    vix_score = (20 - latest_vix) / 20
-
-    fear_greed = (rsi_score + vix_score) / 2
-    return fear_greed
-
-
-def get_cboe_vix(default_vix: float = 20.0) -> float:
-    """Fetch latest CBOE VIX (^VIX) close value using yfinance.
-
-    Returns a default value if the fetch fails or returns NaN.
-    """
     try:
-        vix = yf.download('^VIX', period='7d', interval='1d')
-        if vix is None or vix.empty:
-            return default_vix
-        latest = vix['Close'].dropna().iloc[-1]
-        if pd.isna(latest):
-            return default_vix
-        return float(latest)
-    except Exception:
-        return default_vix
+        return json.loads(clean_text)
+    except json.JSONDecodeError:
+        # Provide helpful debugging info if parsing fails
+        raise RuntimeError(f"Failed to parse model output as JSON. Cleaned text:\n{clean_text}")
 
 
-# 4. Master Function
-def analyze_market_sentiment(tickers):
-    results = []
-    for t in tickers:
-        # use the defined function get_yahoo_news_description to fetch Yahoo news
-        watsonx_sentiment= watsonx_sentiment_analysis(get_yahoo_news_description(t))
-        news_sentiment = get_news_sentiment(t)
-        fear_greed = calculate_fear_greed_index(t)
-        avg_score = (watsonx_sentiment + news_sentiment + fear_greed) / 3
+def get_model_json(prompt: str, api_key: str | None = None, deployment_url: str | None = None) -> Dict[str, Any]:
+    """Convenience wrapper: call the watsonx deployment and return a Python dict.
 
-        results.append({
-            "Ticker": t,
-            "Watsonx Sentiment": watsonx_sentiment,
-            "News Sentiment (DDG)": news_sentiment,
-            "Fear/Greed Index": fear_greed,
-            "Average Sentiment Score": avg_score
-        })
+    If `api_key` or `deployment_url` are not provided, the function will read
+    `WATSONX_APIKEY` and `WATSONX_DEPLOYMENT_URL` from the environment.
 
-    # Ensure numeric types are native Python floats for JSON/printing compatibility
-    for r in results:
-        for k, v in list(r.items()):
-            if isinstance(v, (pd.NA.__class__,)):
-                r[k] = None
-            try:
-                # numpy and pandas numeric types to native float
-                if hasattr(v, 'item'):
-                    r[k] = float(v.item())
-                elif isinstance(v, (int, float)) and not isinstance(v, bool):
-                    r[k] = float(v)
-            except Exception:
-                # leave original value if conversion fails
-                pass
+    The model is expected to return text that uses [[ and ]] to indicate JSON
+    braces; this function will clean and parse that into a Python object.
+    """
+    api_key = api_key or os.getenv("WATSONX_APIKEY")
+    deployment_url = deployment_url or os.getenv("WATSONX_DEPLOYMENT_URL")
 
-    # Build dataclass instances for stronger typing / downstream use
-    dataclass_results = []
-    for r in results:
-        dataclass_results.append(
-            MarketSentiment(
-                ticker=r.get("Ticker"),
-                watsonx_sentiment=float(r.get("Watsonx Sentiment", 0.0) or 0.0),
-                news_sentiment_ddg=float(r.get("News Sentiment (DDG)", 0.0) or 0.0),
-                fear_greed_index=float(r.get("Fear/Greed Index", 0.0) or 0.0),
-                average_sentiment_score=float(r.get("Average Sentiment Score", 0.0) or 0.0),
-            )
-        )
+    if not api_key:
+        raise ValueError("WATSONX_APIKEY is required (pass api_key or set env var)")
 
-    return dataclass_results
+    token = get_iam_token(api_key)
+    return call_watsonx_deployment(deployment_url, token, prompt)
 
-'''
-# test
-if __name__ == '__main__':
-    # Example run when executed as a script
-    analyze_market_sentiment(["AAPL", "TSLA", "MSFT"])
-'''
+
+def wrap_as_market_sentiment(json_output: Any, default_tickers: str = "UNKNOWN") -> Any:
+    """Return a MarketSentiment-shaped JSON object.
+
+    If the model returns a mapping of tickers to reports, convert each entry. If it
+    returns a single report with keys like `news_list` and `hotnews_summary`, wrap it
+    into one MarketSentiment dict.
+    """
+    def make_entry(ticker: str, report: Any) -> Dict[str, Any]:
+        return {
+            "ticker": ticker,
+            "watsonx_sentiment": None,
+            "news_sentiment_ddg": None,
+            "fear_greed_index": None,
+            "average_sentiment_score": None,
+            "news_report": report,
+        }
+
+    # If the model returned a dict where top-level keys look like tickers (or are arbitrary),
+    # try to map them to MarketSentiment entries.
+    if isinstance(json_output, dict):
+        if "news_list" in json_output or "hotnews_summary" in json_output:
+            # Single report
+            ticker = default_tickers.split(",")[0] if default_tickers else "UNKNOWN"
+            return make_entry(ticker, json_output)
+        else:
+            # Assume mapping ticker -> report
+            out = {}
+            for k, v in json_output.items():
+                out[k] = make_entry(k, v if isinstance(v, dict) else {"hotnews_summary": str(v)})
+            return out
+
+    if isinstance(json_output, list):
+        # List of reports -> return list of wrapped entries
+        return [make_entry("UNKNOWN", item) for item in json_output]
+
+    # Fallback: wrap anything else into a minimal report
+    return make_entry("UNKNOWN", {"hotnews_summary": str(json_output)})
+
+
+def main() -> None:
+    # Read required env vars
+    API_KEY = os.getenv("WATSONX_APIKEY")
+    DEPLOYMENT_URL = os.getenv(
+        "WATSONX_DEPLOYMENT_URL",
+        "https://us-south.ml.cloud.ibm.com/ml/v4/deployments/51fc3439-3e3d-4e08-8621-7d5fb5f01553/ai_service?version=2021-05-01",
+    )
+    TICKERS = os.getenv("WATSONX_TICKERS", "AAPL,TSLA,MSFT")
+
+    if not API_KEY:
+        raise ValueError("❌ WATSONX_APIKEY not found in environment variables!")
+
+    token = get_iam_token(API_KEY)
+
+    prompt_text = (
+        f"You are a financial news summarization assistant. For tickers {TICKERS},"
+        " return the output as JSON using [[ ]] instead of {}. Include `news_list` and `hotnews_summary`."
+    )
+
+    json_output = call_watsonx_deployment(DEPLOYMENT_URL, token, prompt_text)
+    wrapped = wrap_as_market_sentiment(json_output, default_tickers=TICKERS)
+
+    print(json.dumps(wrapped, indent=2))
+
+
+if __name__ == "__main__":
+    main()
+
+
+def get_yahoo_news_description(ticker: str, max_articles: int = 5) -> Dict[str, Any]:
+    """Return a dict matching the frontend `news` shape for a single ticker.
+
+    This will call the deployed watsonx model when WATSONX_APIKEY and
+    WATSONX_DEPLOYMENT_URL are set. Otherwise, it returns a minimal
+    placeholder structure.
+    """
+    api_key = os.getenv("WATSONX_APIKEY")
+    deployment_url = os.getenv("WATSONX_DEPLOYMENT_URL")
+
+    prompt = (
+        f"You are a financial news summarization assistant. Return a JSON object with keys `news_list` and `hotnews_summary` for ticker {ticker}. Include up to {max_articles} recent articles in news_list. Use [[ ]] for braces."
+    )
+
+    if api_key and deployment_url:
+        token = get_iam_token(api_key)
+        try:
+            json_output = call_watsonx_deployment(deployment_url, token, prompt)
+            # If the model returned a mapping of tickers, extract this ticker
+            if isinstance(json_output, dict) and ticker in json_output:
+                report = json_output[ticker]
+            else:
+                report = json_output
+
+            # Ensure the report has expected keys
+            if not isinstance(report, dict):
+                report = {"hotnews_summary": str(report), "news_list": []}
+
+            return report
+        except Exception:
+            # On failure, fall back to minimal structure
+            return {"news_list": [], "hotnews_summary": f"No news available for {ticker}"}
+
+    # Fallback when no deployment configured
+    return {"news_list": [], "hotnews_summary": f"No news service configured for {ticker}"}
