@@ -29,6 +29,7 @@ import {
 } from "lucide-react"
 import { MarketDataWidget } from "@/components/market-data-widget"
 import { InvestmentReportComponent } from "@/components/ui/investment report"
+import { ChatbotDrawer, ChatbotFAB } from "@/components/chatbot-drawer"
 import {
   LineChart,
   AreaChart,
@@ -59,6 +60,8 @@ const GOAL_OPTIONS = [
 export default function DashboardPage() {
   const [selectedTab, setSelectedTab] = useState("overview")
   const [userProfile, setUserProfile] = useState<any>(null)
+  const [isChatbotOpen, setIsChatbotOpen] = useState(false)
+  const [userId, setUserId] = useState<string>("demo_user")
   const portfolioValue = 125000  // Realistic starting portfolio value
   const changeAmount = 3850      // Realistic monthly change amount  
   const changePercentage = 3.18  // Moderate positive performance
@@ -68,6 +71,11 @@ export default function DashboardPage() {
     const savedProfile = localStorage.getItem('investmentProfile')
     if (savedProfile) {
       setUserProfile(JSON.parse(savedProfile))
+      // Extract user ID from profile
+      const profile = JSON.parse(savedProfile)
+      if (profile.profile_id) {
+        setUserId(profile.profile_id)
+      }
     }
   }, [])
 
@@ -89,6 +97,15 @@ export default function DashboardPage() {
               </Badge>
             </div>
             <div className="flex items-center space-x-4">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="bg-transparent"
+                onClick={() => setIsChatbotOpen(true)}
+              >
+                <MessageSquare className="w-4 h-4 mr-2" />
+                AI Assistant
+              </Button>
               <Link href="/market-data">
                 <Button variant="outline" size="sm" className="bg-transparent">
                   <Activity className="w-4 h-4 mr-2" />
@@ -752,6 +769,15 @@ export default function DashboardPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Chatbot Components */}
+      <ChatbotDrawer 
+        userId={userId}
+        isOpen={isChatbotOpen}
+        onClose={() => setIsChatbotOpen(false)}
+      />
+      
+      <ChatbotFAB userId={userId} />
     </div>
   )
 }

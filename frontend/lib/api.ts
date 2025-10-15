@@ -368,6 +368,113 @@ export const apiClient = {
   }> {
     return apiRequest(`/api/dashboard/performance/${userId}?period=${period}`);
   },
+
+  // Chatbot endpoints
+  async sendChatMessage(userId: string, message: string, sessionId?: string): Promise<{
+    status: string;
+    response: {
+      answer: string;
+      reasoning_trace: Array<{
+        step: number;
+        action: string;
+        result: string;
+        success: boolean;
+      }>;
+      sources_used: Array<{
+        title?: string;
+        url?: string;
+        snippet?: string;
+        source_type?: string;
+      }>;
+      tools_called: string[];
+      metadata: {
+        user_id: string;
+        session_id?: string;
+        timestamp: string;
+        reasoning_steps: number;
+        context_retrieved: boolean;
+        web_searched: boolean;
+      };
+    };
+    timestamp: string;
+  }> {
+    return apiRequest('/api/chat/message', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        message: message,
+        session_id: sessionId
+      })
+    });
+  },
+
+  async getChatHistory(userId: string, limit?: number): Promise<{
+    status: string;
+    user_id: string;
+    conversation: Array<{
+      type: string;
+      content: string;
+      timestamp: string;
+    }>;
+    total_messages: number;
+    timestamp: string;
+  }> {
+    const url = limit 
+      ? `/api/chat/history/${userId}?limit=${limit}`
+      : `/api/chat/history/${userId}`;
+    return apiRequest(url);
+  },
+
+  async clearChatHistory(userId: string): Promise<{
+    status: string;
+    message: string;
+    timestamp: string;
+  }> {
+    return apiRequest(`/api/chat/history/${userId}`, {
+      method: 'DELETE'
+    });
+  },
+
+  // Report generation endpoints
+  async generatePdfReport(userId: string, reportData?: any): Promise<{
+    status: string;
+    pdf_filename: string;
+    download_url: string;
+    message: string;
+  }> {
+    return apiRequest('/api/report/generate-pdf', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        report_data: reportData
+      })
+    });
+  },
+
+  async getMarkdownReport(userId: string): Promise<{
+    status: string;
+    user_id: string;
+    markdown_content: string;
+    timestamp: string;
+  }> {
+    return apiRequest(`/api/report/markdown/${userId}`);
+  },
+
+  async storeReportInVectorDb(userId: string, reportId: string, markdownContent: string, metadata?: any): Promise<{
+    status: string;
+    message: string;
+    timestamp: string;
+  }> {
+    return apiRequest('/api/report/store-in-vector-db', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        report_id: reportId,
+        markdown_content: markdownContent,
+        metadata: metadata
+      })
+    });
+  },
 };
 
 // Helper functions for error handling

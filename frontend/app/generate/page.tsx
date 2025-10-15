@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Brain, Zap, Shield, BarChart3, CheckCircle, ArrowRight, Sparkles, Loader2, AlertCircle } from "lucide-react"
+import { Brain, Zap, Shield, BarChart3, CheckCircle, ArrowRight, Sparkles, Loader2, AlertCircle, FileText, Download } from "lucide-react"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
@@ -74,8 +74,63 @@ export default function GeneratePage() {
   const [streamMessage, setStreamMessage] = useState<string>("")
   const [streamEvents, setStreamEvents] = useState<StreamEvent[]>([])
   const [currentPhase, setCurrentPhase] = useState<string>("")
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
+  const [pdfDownloadUrl, setPdfDownloadUrl] = useState<string | null>(null)
+  const [userId, setUserId] = useState<string>("demo_user")
   
   const router = useRouter()
+
+  // PDF generation function
+  const generatePdfReport = async () => {
+    if (!portfolio || !assessmentData) {
+      setError("No portfolio data available for PDF generation")
+      return
+    }
+
+    setIsGeneratingPdf(true)
+    try {
+      const response = await apiClient.generatePdfReport(userId, {
+        report_title: `Investment Portfolio Analysis - ${userId.slice(0, 8)}`,
+        generated_date: new Date().toLocaleDateString(),
+        client_id: userId,
+        executive_summary: "AI-generated portfolio analysis based on your investment profile and risk tolerance.",
+        allocation_rationale: "Portfolio allocation optimized using advanced AI algorithms considering your risk profile and market conditions.",
+        selection_rationale: "Individual investments selected based on fundamental analysis, market sentiment, and risk-return optimization.",
+        risk_commentary: "Risk management through diversification and appropriate asset allocation tailored to your risk tolerance.",
+        key_recommendations: [
+          "Review portfolio performance quarterly",
+          "Maintain target allocation through rebalancing",
+          "Consider tax-loss harvesting opportunities"
+        ],
+        next_steps: [
+          "Set up automatic monthly investments",
+          "Monitor portfolio performance regularly",
+          "Review and adjust strategy annually"
+        ],
+        portfolio_allocation: portfolio.allocation.reduce((acc, item) => {
+          acc[item.name] = item.percentage
+          return acc
+        }, {} as Record<string, number>),
+        individual_holdings: portfolio.allocation.map(item => ({
+          name: item.name,
+          symbol: item.name.replace(/\s+/g, '').toUpperCase(),
+          allocation_percent: item.percentage,
+          value: item.amount
+        }))
+      })
+
+      if (response.status === "success") {
+        setPdfDownloadUrl(response.download_url)
+      } else {
+        throw new Error("Failed to generate PDF")
+      }
+    } catch (error) {
+      console.error("Error generating PDF:", error)
+      setError("Failed to generate PDF report. Please try again.")
+    } finally {
+      setIsGeneratingPdf(false)
+    }
+  }
 
   // Load assessment data on component mount
   useEffect(() => {
@@ -86,6 +141,10 @@ export default function GeneratePage() {
           try {
             const parsedData = JSON.parse(storedAssessment)
             setAssessmentData(parsedData)
+            // Extract user ID from assessment data
+            if (parsedData.profile_id) {
+              setUserId(parsedData.profile_id)
+            }
             return parsedData
           } catch (err) {
             console.error('Error parsing assessment data:', err)
@@ -559,8 +618,31 @@ export default function GeneratePage() {
               <Button variant="outline" size="lg" className="text-lg px-8 py-6 bg-transparent">
                 Customize Portfolio
               </Button>
-              <Button variant="outline" size="lg" className="text-lg px-8 py-6 bg-transparent">
-                Download Report
+              <Button 
+                variant="outline" 
+                size="lg" 
+                className="text-lg px-8 py-6 bg-transparent"
+                onClick={generatePdfReport}
+                disabled={isGeneratingPdf}
+              >
+                {isGeneratingPdf ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    Generating PDF...
+                  </>
+                ) : pdfDownloadUrl ? (
+                  <>
+                    <Download className="w-5 h-5 mr-2" />
+                    <a href={pdfDownloadUrl} download className="flex items-center">
+                      Download PDF Report
+                    </a>
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-5 h-5 mr-2" />
+                    Generate PDF Report
+                  </>
+                )}
               </Button>
             </div>
           </div>

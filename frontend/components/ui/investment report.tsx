@@ -95,7 +95,7 @@ export function InvestmentReportComponent() {
       
       // Choose endpoint based on whether we have user data
       const endpoint = usePersonalizedEndpoint 
-        ? 'http://localhost:8000/api/generate-personalized-report'
+        ? 'http://localhost:8000/api/generate-report-from-profile'
         : 'http://localhost:8000/api/generate-report'
       
       const requestOptions: RequestInit = {

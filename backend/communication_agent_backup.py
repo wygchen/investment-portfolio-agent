@@ -11,8 +11,8 @@ import os
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from langchain_ibm import WatsonxLLM
-from langgraph.graph import Graph, END
-from langgraph.graph.graph import CompiledGraph
+from langgraph.graph import StateGraph, END
+from langgraph.graph import CompiledGraph
 import logging
 
 # PDF generation imports
@@ -291,7 +291,7 @@ class CommunicationAgent:
         """Setup LangGraph workflow for report generation"""
         try:
             # Create workflow graph
-            workflow = Graph()
+            workflow = StateGraph(dict)
             
             # Add nodes for different report sections
             workflow.add_node("analyze_profile", self.analyze_user_profile)

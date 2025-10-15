@@ -47,3 +47,12 @@ dependencies:
       
       # Optional: for enhanced development
       - python-json-logger
+      
+      # Vector database and embeddings
+      - pymilvus  # Milvus Lite
+      - langchain-text-splitters  # Markdown text splitter (latest compatible version)
+      - sentence-transformers  # For embeddings
+      
+      # LangChain memory and chat
+      - langchain-community  # For additional memory backends (latest compatible version)
+      - langchain-core  # Core LangChain functionality (latest compatible version)

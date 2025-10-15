@@ -22,14 +22,22 @@ logger = logging.getLogger(__name__)
 from profile_processor import generate_user_profile
 # Import report generator for PDF testing
 from report_generator import UnifiedReportGenerator
-from market_news_agent.market_sentiment import get_yahoo_news_description
+# Try to import market sentiment - fallback if dependencies missing
+# try:
+#     from market_news_agent.market_sentiment import get_yahoo_news_description
+#     MARKET_SENTIMENT_AVAILABLE = True
+#     logger.info("✅ Market sentiment imported successfully")
+# except ImportError as e:
+#     logger.warning(f"⚠️  Market sentiment not available: {e}")
+#     MARKET_SENTIMENT_AVAILABLE = False
+#     get_yahoo_news_description = None
 
 # Try to import main agent - fallback if dependencies missing
 try:
-    from main_agent import MainAgent
+    from .main_agent import MainAgent
     MAIN_AGENT_AVAILABLE = True
     logger.info("✅ MainAgent imported successfully")
-except ImportError as e:
+except (ImportError, ModuleNotFoundError) as e:
     logger.warning(f"⚠️  MainAgent not available: {e}")
     MAIN_AGENT_AVAILABLE = False
     MainAgent = None
@@ -182,13 +190,16 @@ async def validate_assessment(assessment_data: FrontendAssessmentData):
         logger.error(f"Error validating assessment: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error validating assessment: {str(e)}")
 
-@app.post("/api/get-news")
-async def get_news(ticker: str):
-    """
-    Get news data for a given ticker
-    """
-    news_data = get_yahoo_news_description(ticker, max_articles=5)
-    return {"news": news_data}
+# @app.post("/api/get-news")
+# async def get_news(ticker: str):
+#     """
+#     Get news data for a given ticker
+#     """
+#     if not MARKET_SENTIMENT_AVAILABLE:
+#         raise HTTPException(status_code=503, detail="Market sentiment service not available")
+    
+#     news_data = get_yahoo_news_description(ticker, max_articles=5)
+#     return {"news": news_data}
     # Example JSON response structure for frontend reference:
     # {
     #   "news": {
@@ -1242,6 +1253,307 @@ async def get_portfolio():
             ]
         }
     }
+
+# =============================================================================
+# CHATBOT ENDPOINTS
+# =============================================================================
+
+@app.post("/api/chat/message")
+async def send_chat_message(request_data: Dict[str, Any]):
+    """
+    Send a message to the chatbot and get a response.
+    
+    Input:
+        {
+            "user_id": "string",
+            "message": "string", 
+            "session_id": "string" (optional)
+        }
+    
+    Returns:
+        {
+            "answer": "string",
+            "reasoning_trace": [...],
+            "sources_used": [...],
+            "tools_called": [...],
+            "metadata": {...}
+        }
+    """
+    try:
+        user_id = request_data.get("user_id")
+        message = request_data.get("message")
+        session_id = request_data.get("session_id")
+        
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+        if not message:
+            raise HTTPException(status_code=400, detail="message is required")
+        
+        # Import chatbot agent
+        from chatbot_agent import process_chat_message
+        
+        # Process the message
+        response = process_chat_message(user_id, message, session_id)
+        
+        return {
+            "status": "success",
+            "response": response,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing chat message: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing chat message: {str(e)}")
+
+@app.get("/api/chat/history/{user_id}")
+async def get_chat_history(user_id: str, limit: Optional[int] = None):
+    """
+    Get chat history for a user.
+    
+    Args:
+        user_id: User identifier
+        limit: Maximum number of messages to return (optional)
+    
+    Returns:
+        List of conversation messages
+    """
+    try:
+        from chat_memory import get_user_conversation
+        
+        conversation = get_user_conversation(user_id, limit)
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "conversation": conversation,
+            "total_messages": len(conversation),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting chat history for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting chat history: {str(e)}")
+
+@app.delete("/api/chat/history/{user_id}")
+async def clear_chat_history(user_id: str):
+    """
+    Clear chat history for a user.
+    
+    Args:
+        user_id: User identifier
+    
+    Returns:
+        Success confirmation
+    """
+    try:
+        from chat_memory import clear_user_conversation
+        
+        success = clear_user_conversation(user_id)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": f"Chat history cleared for user {user_id}",
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to clear chat history")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing chat history for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error clearing chat history: {str(e)}")
+
+# =============================================================================
+# REPORT GENERATION ENDPOINTS
+# =============================================================================
+
+@app.post("/api/report/generate-pdf")
+async def generate_pdf_report(request_data: Dict[str, Any]):
+    """
+    Generate PDF report from existing portfolio data.
+    
+    Input:
+        {
+            "user_id": "string",
+            "report_data": {...} (optional - will use latest if not provided)
+        }
+    
+    Returns:
+        {
+            "status": "success",
+            "pdf_filename": "string",
+            "download_url": "string"
+        }
+    """
+    try:
+        user_id = request_data.get("user_id")
+        report_data = request_data.get("report_data")
+        
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+        
+        # If no report data provided, try to get latest
+        if not report_data:
+            # This would typically fetch from database or cache
+            # For now, use a placeholder
+            report_data = {
+                "report_title": f"Investment Portfolio Analysis - {user_id[:8]}",
+                "generated_date": datetime.now().strftime("%B %d, %Y"),
+                "client_id": user_id,
+                "executive_summary": "Portfolio analysis based on your investment profile.",
+                "allocation_rationale": "Diversified portfolio allocation strategy.",
+                "selection_rationale": "Carefully selected investments based on your risk profile.",
+                "risk_commentary": "Risk management through diversification.",
+                "key_recommendations": ["Review portfolio quarterly", "Maintain diversification"],
+                "next_steps": ["Set up automatic investments", "Monitor performance"]
+            }
+        
+        # Generate PDF using communication agent
+        try:
+            from communication_agent import generate_pdf_report
+        except ImportError as e:
+            logger.error(f"Communication agent not available: {e}")
+            raise HTTPException(status_code=503, detail="PDF generation service not available")
+        
+        pdf_filename = f"investment_report_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        pdf_path = generate_pdf_report(report_data, pdf_filename)
+        
+        return {
+            "status": "success",
+            "pdf_filename": pdf_filename,
+            "download_url": f"/api/download-report/{pdf_filename}",
+            "message": "PDF report generated successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating PDF report: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generating PDF report: {str(e)}")
+
+@app.get("/api/report/markdown/{user_id}")
+async def get_markdown_report(user_id: str):
+    """
+    Get markdown report for a user.
+    
+    Args:
+        user_id: User identifier
+    
+    Returns:
+        Markdown formatted report
+    """
+    try:
+        # This would typically fetch from database or cache
+        # For now, return a placeholder
+        markdown_content = f"""# Investment Portfolio Analysis - {user_id[:8]}
+
+**Generated:** {datetime.now().strftime('%B %d, %Y')}  
+**Client ID:** {user_id}
+
+---
+
+## Executive Summary
+
+This is a placeholder markdown report. In a full implementation, this would be generated from the user's portfolio data and stored in the vector database.
+
+---
+
+## Portfolio Allocation Strategy
+
+Your portfolio is designed with a balanced approach to risk and return, tailored to your investment profile.
+
+---
+
+## Investment Selection Rationale
+
+Investments are selected based on your risk tolerance, time horizon, and financial goals.
+
+---
+
+## Risk Analysis & Commentary
+
+Risk is managed through diversification and appropriate asset allocation.
+
+---
+
+## Key Recommendations
+
+1. Review your portfolio quarterly
+2. Maintain appropriate diversification
+3. Consider rebalancing as needed
+
+---
+
+## Recommended Next Steps
+
+1. Set up automatic monthly investments
+2. Monitor portfolio performance
+3. Review and adjust as needed
+"""
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "markdown_content": markdown_content,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting markdown report for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting markdown report: {str(e)}")
+
+@app.post("/api/report/store-in-vector-db")
+async def store_report_in_vector_db(request_data: Dict[str, Any]):
+    """
+    Store a portfolio report in the vector database for chatbot access.
+    
+    Input:
+        {
+            "user_id": "string",
+            "report_id": "string",
+            "markdown_content": "string",
+            "metadata": {...} (optional)
+        }
+    
+    Returns:
+        Success confirmation
+    """
+    try:
+        user_id = request_data.get("user_id")
+        report_id = request_data.get("report_id")
+        markdown_content = request_data.get("markdown_content")
+        metadata = request_data.get("metadata", {})
+        
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+        if not report_id:
+            raise HTTPException(status_code=400, detail="report_id is required")
+        if not markdown_content:
+            raise HTTPException(status_code=400, detail="markdown_content is required")
+        
+        # Store in vector database
+        from vector_store import add_portfolio_report
+        
+        success = add_portfolio_report(user_id, report_id, markdown_content, metadata)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": f"Report {report_id} stored in vector database for user {user_id}",
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to store report in vector database")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error storing report in vector database: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error storing report: {str(e)}")
 
 # Helper functions from simple_main.py for enhanced report generation
 def _create_house_view_summary(user_data: Dict[str, Any]) -> Dict[str, Any]:

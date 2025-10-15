@@ -5,7 +5,7 @@ from langchain_ibm import WatsonxLLM
 from textblob import TextBlob
 import os
 from dataclasses import asdict
-from market_sentiment_types import MarketSentiment
+from .market_sentiment_types import MarketSentiment
 
 """
 # Debug flag: set environment variable MARKET_SENTIMENT_DEBUG=1 to print raw LLM responses
