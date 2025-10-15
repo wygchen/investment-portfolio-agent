@@ -3,7 +3,7 @@ import requests
 import json
 import re
 from dotenv import load_dotenv
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 load_dotenv()
@@ -117,7 +117,7 @@ def call_watsonx_deployment(deployment_url: str, api_token: str, prompt: str) ->
         raise RuntimeError(f"Failed to parse model output as JSON. Cleaned text:\n{clean_text}")
 
 
-def get_model_json(prompt: str, api_key: str | None = None, deployment_url: str | None = None) -> Dict[str, Any]:
+def get_model_json(prompt: str, api_key: Optional[str] = None, deployment_url: Optional[str] = None) -> Dict[str, Any]:
     """Convenience wrapper: call the watsonx deployment and return a Python dict.
 
     If `api_key` or `deployment_url` are not provided, the function will read

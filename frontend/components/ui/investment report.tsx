@@ -20,8 +20,10 @@ import {
   Clock,
   CheckCircle,
   AlertCircle,
-  Send
+  Send,
+  Newspaper
 } from "lucide-react"
+import { NewsInsightsComponent } from "@/components/ui/news-insights"
 
 interface InvestmentReport {
   report_title: string
@@ -55,7 +57,7 @@ export function InvestmentReportComponent() {
   const [qaHistory, setQAHistory] = useState<QAItem[]>([])
   const [currentQuestion, setCurrentQuestion] = useState("")
   const [askingQuestion, setAskingQuestion] = useState(false)
-  const [activeTab, setActiveTab] = useState<"report" | "qa">("report")
+  const [activeTab, setActiveTab] = useState<"report" | "qa" | "news">("report")
 
   // Load existing report on component mount
   useEffect(() => {
@@ -271,6 +273,19 @@ export function InvestmentReportComponent() {
                 {qaHistory.length}
               </Badge>
             )}
+          </div>
+        </button>
+        <button
+          onClick={() => setActiveTab("news")}
+          className={`flex-1 px-4 py-2 rounded-md transition-colors ${
+            activeTab === "news" 
+              ? "bg-background shadow-sm text-foreground" 
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <div className="flex items-center justify-center space-x-2">
+            <Newspaper className="w-4 h-4" />
+            <span>News & Insights</span>
           </div>
         </button>
       </div>
@@ -514,6 +529,13 @@ export function InvestmentReportComponent() {
               ))
             )}
           </div>
+        </div>
+      )}
+
+      {/* News & Insights Tab */}
+      {activeTab === "news" && (
+        <div className="space-y-6">
+          <NewsInsightsComponent />
         </div>
       )}
     </div>

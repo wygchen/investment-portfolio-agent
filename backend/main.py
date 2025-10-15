@@ -183,32 +183,206 @@ async def validate_assessment(assessment_data: FrontendAssessmentData):
         raise HTTPException(status_code=500, detail=f"Error validating assessment: {str(e)}")
 
 @app.post("/api/get-news")
-async def get_news(ticker: str):
+async def get_news(request_data: Dict[str, Any]):
     """
-    Get news data for a given ticker
+    Get news data for a given ticker with enhanced structure for News & Insights component
     """
-    news_data = get_yahoo_news_description(ticker, max_articles=5)
-    return {"news": news_data}
-    # Example JSON response structure for frontend reference:
-    # {
-    #   "news": {
-    #     "news_list": [
-    #       {
-    #         "2024-01-15T10:30:00Z": {
-    #           "heading": "Company reports strong Q4 earnings",
-    #           "source": "Reuters"
-    #         }
-    #       },
-    #       {
-    #         "2024-01-15T09:15:00Z": {
-    #           "heading": "Analyst upgrades stock to buy rating",
-    #           "source": "Bloomberg"
-    #         }
-    #       }
-    #     ],
-    #     "hotnews_summary": "Recent news shows positive sentiment with strong earnings and analyst upgrades driving investor confidence."
-    #   }
-    # }
+    ticker = request_data.get("ticker")
+    if not ticker:
+        raise HTTPException(status_code=400, detail="Ticker is required")
+    
+    try:
+        # Get news data from market_news_agent
+        news_data = get_yahoo_news_description(ticker, max_articles=5)
+        
+        # Transform the data to match our frontend component structure
+        transformed_news = transform_news_data(ticker, news_data)
+        
+        return {"status": "success", "news": transformed_news}
+        
+    except Exception as e:
+        logger.error(f"Error fetching news for {ticker}: {str(e)}")
+        # Return fallback data structure
+        return {
+            "status": "error", 
+            "news": create_fallback_news_data(ticker),
+            "message": f"Could not fetch live news for {ticker}, using fallback data"
+        }
+
+
+@app.post("/api/get-portfolio-news")
+async def get_portfolio_news(request_data: Dict[str, Any]):
+    """
+    Get news data for multiple portfolio tickers for News & Insights component
+    """
+    tickers = request_data.get("tickers", [])
+    period = request_data.get("period", "daily")  # "daily" or "weekly"
+    
+    if not tickers:
+        # Use default portfolio tickers if none provided
+        tickers = ["MSFT", "GOOGL", "AAPL", "NVDA", "NEE", "TSLA"]
+    
+    portfolio_news = []
+    
+    for ticker in tickers:
+        try:
+            # Get news data for each ticker
+            news_data = get_yahoo_news_description(ticker, max_articles=3)
+            transformed_news = transform_news_data(ticker, news_data, period=period)
+            portfolio_news.append(transformed_news)
+            
+        except Exception as e:
+            logger.error(f"Error fetching news for {ticker}: {str(e)}")
+            # Add fallback data for this ticker
+            portfolio_news.append(create_fallback_news_data(ticker, period=period))
+    
+    return {
+        "status": "success",
+        "period": period,
+        "portfolio_news": portfolio_news
+    }
+
+
+def transform_news_data(ticker: str, news_data: Dict[str, Any], period: str = "daily") -> Dict[str, Any]:
+    """
+    Transform market_news_agent data to match News & Insights component structure
+    """
+    # Company names mapping
+    company_names = {
+        "MSFT": "Microsoft Corporation",
+        "GOOGL": "Alphabet Inc",
+        "AAPL": "Apple Inc", 
+        "NVDA": "NVIDIA Corporation",
+        "NEE": "NextEra Energy",
+        "TSLA": "Tesla Inc"
+    }
+    
+    # Transform news_list to our expected format
+    news_articles = []
+    news_list = news_data.get("news_list", [])
+    
+    for i, news_item in enumerate(news_list):
+        if isinstance(news_item, dict):
+            # Handle the timestamp: article structure from market_news_agent
+            for timestamp, article in news_item.items():
+                news_articles.append({
+                    "timestamp": timestamp,
+                    "heading": article.get("heading", f"News update for {ticker}"),
+                    "source": article.get("source", "Market Data Provider"),
+                    "url": f"https://finance.yahoo.com/quote/{ticker}/news"
+                })
+        else:
+            # Handle simpler article structures
+            news_articles.append({
+                "timestamp": datetime.now().isoformat(),
+                "heading": f"Market update for {ticker}",
+                "source": "Market Data Provider",
+                "url": f"https://finance.yahoo.com/quote/{ticker}/news"
+            })
+    
+    # Generate key event based on ticker and period
+    key_events = generate_key_event(ticker, period)
+    
+    return {
+        "ticker": ticker,
+        "companyName": company_names.get(ticker, f"{ticker} Inc"),
+        "keyEvent": key_events,
+        "eventSummary": f"Recent developments for {company_names.get(ticker, ticker)} show {period} performance trends. {news_data.get('hotnews_summary', 'Market activity continues with mixed signals.')}",
+        "relatedNews": news_articles[:3],  # Limit to 3 articles
+        "hotNewsSummary": news_data.get("hotnews_summary", f"No specific market sentiment available for {ticker} at this time."),
+        "marketData": {
+            "price": round(100 + (hash(ticker) % 200), 2),  # Mock price based on ticker
+            "change": round((hash(ticker) % 20 - 10) / 10, 2), # Mock change
+            "changePercent": round((hash(ticker) % 10 - 5) / 10, 2) # Mock percent change
+        }
+    }
+
+
+def generate_key_event(ticker: str, period: str = "daily") -> Dict[str, Any]:
+    """
+    Generate realistic key events for different tickers based on their business
+    """
+    key_events = {
+        "MSFT": {
+            "title": "Microsoft Cloud Revenue Acceleration",
+            "description": "Azure and Microsoft 365 services show continued enterprise adoption with strong quarterly growth rates exceeding analyst expectations.",
+            "impact": "positive",
+            "category": "earnings"
+        },
+        "GOOGL": {
+            "title": "Google AI Infrastructure Expansion", 
+            "description": "Major investments in AI data center capacity and new Bard AI capabilities position company for continued search and cloud market leadership.",
+            "impact": "positive",
+            "category": "company"
+        },
+        "AAPL": {
+            "title": "iPhone Sales Beat Expectations",
+            "description": "Strong consumer demand for iPhone 15 series and services revenue growth drives positive analyst sentiment and market performance.",
+            "impact": "positive", 
+            "category": "market"
+        },
+        "NVDA": {
+            "title": "AI Chip Demand Drives Record Revenue",
+            "description": "Data center GPU sales continue accelerating as enterprise AI adoption reaches new highs, with order backlog extending into 2025.",
+            "impact": "positive",
+            "category": "earnings"
+        },
+        "NEE": {
+            "title": "Renewable Energy Project Approvals",
+            "description": "Regulatory approval for major solar and wind projects in Florida and Texas strengthens long-term growth pipeline and ESG positioning.",
+            "impact": "positive", 
+            "category": "regulatory"
+        },
+        "TSLA": {
+            "title": "Cybertruck Production Milestone",
+            "description": "Manufacturing ramp-up reaches target production levels with initial customer deliveries meeting quality standards and timeline commitments.",
+            "impact": "neutral",
+            "category": "company"
+        }
+    }
+    
+    # Return the event for the ticker, or a generic one
+    return key_events.get(ticker, {
+        "title": f"{ticker} Business Update",
+        "description": f"Recent business developments for {ticker} show continued operational progress with mixed market reception.",
+        "impact": "neutral", 
+        "category": "company"
+    })
+
+
+def create_fallback_news_data(ticker: str, period: str = "daily") -> Dict[str, Any]:
+    """
+    Create fallback news data when live data is unavailable
+    """
+    company_names = {
+        "MSFT": "Microsoft Corporation",
+        "GOOGL": "Alphabet Inc", 
+        "AAPL": "Apple Inc",
+        "NVDA": "NVIDIA Corporation", 
+        "NEE": "NextEra Energy",
+        "TSLA": "Tesla Inc"
+    }
+    
+    return {
+        "ticker": ticker,
+        "companyName": company_names.get(ticker, f"{ticker} Inc"),
+        "keyEvent": generate_key_event(ticker, period),
+        "eventSummary": f"Market data for {company_names.get(ticker, ticker)} is currently unavailable. Please check back later for updated news and analysis.",
+        "relatedNews": [
+            {
+                "timestamp": datetime.now().isoformat(),
+                "heading": f"{company_names.get(ticker, ticker)} continues market operations",
+                "source": "Market Data Provider",
+                "url": f"https://finance.yahoo.com/quote/{ticker}"
+            }
+        ],
+        "hotNewsSummary": f"Live market sentiment for {ticker} is currently unavailable. Historical data suggests continued business operations with standard market volatility.",
+        "marketData": {
+            "price": round(100 + (hash(ticker) % 200), 2),
+            "change": 0.0,
+            "changePercent": 0.0
+        }
+    }
 
 @app.post("/api/ask-question")
 async def ask_portfolio_question(question_data: Dict[str, Any]):
