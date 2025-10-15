@@ -243,6 +243,31 @@ async def get_portfolio_news(request_data: Dict[str, Any]):
     }
 
 
+@app.post("/api/get-portfolio-news-mock")
+async def get_portfolio_news_mock(request_data: Dict[str, Any]):
+    """
+    Mock news endpoint that returns fallback data immediately for testing
+    """
+    tickers = request_data.get("tickers", [])
+    period = request_data.get("period", "daily")
+    
+    if not tickers:
+        # Use default portfolio tickers if none provided
+        tickers = ["MSFT", "GOOGL", "AAPL", "NVDA", "NEE", "TSLA"]
+    
+    portfolio_news = []
+    
+    for ticker in tickers:
+        # Always use fallback data for mock
+        portfolio_news.append(create_fallback_news_data(ticker, period=period))
+    
+    return {
+        "status": "success",
+        "period": period,
+        "portfolio_news": portfolio_news
+    }
+
+
 def transform_news_data(ticker: str, news_data: Dict[str, Any], period: str = "daily") -> Dict[str, Any]:
     """
     Transform market_news_agent data to match News & Insights component structure
@@ -303,6 +328,12 @@ def generate_key_event(ticker: str, period: str = "daily") -> Dict[str, Any]:
     Generate realistic key events for different tickers based on their business
     """
     key_events = {
+        "VTI": {
+            "title": "Broad Market Index Reaches New High",
+            "description": "Strong performance across US equity markets drives total stock market ETF to record levels, reflecting robust economic fundamentals and corporate earnings.",
+            "impact": "positive",
+            "category": "market"
+        },
         "MSFT": {
             "title": "Microsoft Cloud Revenue Acceleration",
             "description": "Azure and Microsoft 365 services show continued enterprise adoption with strong quarterly growth rates exceeding analyst expectations.",
@@ -321,17 +352,17 @@ def generate_key_event(ticker: str, period: str = "daily") -> Dict[str, Any]:
             "impact": "positive", 
             "category": "market"
         },
-        "NVDA": {
-            "title": "AI Chip Demand Drives Record Revenue",
-            "description": "Data center GPU sales continue accelerating as enterprise AI adoption reaches new highs, with order backlog extending into 2025.",
-            "impact": "positive",
-            "category": "earnings"
+        "BND": {
+            "title": "Bond Market Stability Amid Fed Policy",
+            "description": "Total bond market ETF maintains steady performance as Federal Reserve policy provides clear guidance on interest rate trajectory and inflation targets.",
+            "impact": "neutral",
+            "category": "market"
         },
-        "NEE": {
-            "title": "Renewable Energy Project Approvals",
-            "description": "Regulatory approval for major solar and wind projects in Florida and Texas strengthens long-term growth pipeline and ESG positioning.",
+        "GLD": {
+            "title": "Gold Prices Rise on Global Uncertainty",
+            "description": "Safe-haven demand for gold increases amid geopolitical tensions and inflation concerns, driving precious metals ETF performance higher.",
             "impact": "positive", 
-            "category": "regulatory"
+            "category": "market"
         },
         "TSLA": {
             "title": "Cybertruck Production Milestone",
@@ -355,12 +386,12 @@ def create_fallback_news_data(ticker: str, period: str = "daily") -> Dict[str, A
     Create fallback news data when live data is unavailable
     """
     company_names = {
+        "VTI": "Vanguard Total Stock Market ETF",
         "MSFT": "Microsoft Corporation",
-        "GOOGL": "Alphabet Inc", 
+        "GOOGL": "Alphabet Inc Class A", 
         "AAPL": "Apple Inc",
-        "NVDA": "NVIDIA Corporation", 
-        "NEE": "NextEra Energy",
-        "TSLA": "Tesla Inc"
+        "BND": "Vanguard Total Bond Market ETF",
+        "GLD": "SPDR Gold Shares ETF"
     }
     
     return {

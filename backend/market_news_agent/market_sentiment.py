@@ -29,7 +29,7 @@ def call_watsonx_deployment(deployment_url: str, api_token: str, prompt: str) ->
     headers = {"Content-Type": "application/json", "Authorization": "Bearer " + api_token}
     payload = {"messages": [{"role": "user", "content": prompt}]}
 
-    resp = requests.post(deployment_url, headers=headers, json=payload, timeout=30)
+    resp = requests.post(deployment_url, headers=headers, json=payload, timeout=5)
     resp.raise_for_status()
 
     result = None

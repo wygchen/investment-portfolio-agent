@@ -60,14 +60,16 @@ interface NewsInsightsData {
   weekly: StockBrief[]
 }
 
-// Mock portfolio tickers - in a real app, this would come from the user's actual portfolio
+// Portfolio tickers matching the dashboard holdings
 const PORTFOLIO_TICKERS = [
+  // Equity Holdings from dashboard
+  { symbol: "VTI", name: "Vanguard Total Stock Market ETF" },
   { symbol: "MSFT", name: "Microsoft Corporation" },
-  { symbol: "GOOGL", name: "Alphabet Inc" },
+  { symbol: "GOOGL", name: "Alphabet Inc Class A" },
   { symbol: "AAPL", name: "Apple Inc" },
-  { symbol: "NVDA", name: "NVIDIA Corporation" },
-  { symbol: "NEE", name: "NextEra Energy" },
-  { symbol: "TSLA", name: "Tesla Inc" }
+  // Major ETF Holdings for additional news coverage
+  { symbol: "BND", name: "Vanguard Total Bond Market ETF" },
+  { symbol: "GLD", name: "SPDR Gold Shares ETF" }
 ]
 
 export function NewsInsightsComponent() {
@@ -91,7 +93,7 @@ export function NewsInsightsComponent() {
       
       // Fetch daily and weekly briefs from backend
       const [dailyResponse, weeklyResponse] = await Promise.all([
-        fetch('http://localhost:8000/api/get-portfolio-news', {
+        fetch('http://localhost:8000/api/get-portfolio-news-mock', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -101,7 +103,7 @@ export function NewsInsightsComponent() {
             period: 'daily'
           })
         }),
-        fetch('http://localhost:8000/api/get-portfolio-news', {
+        fetch('http://localhost:8000/api/get-portfolio-news-mock', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
