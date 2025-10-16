@@ -24,11 +24,47 @@ from typing import List, Optional, Dict, Any, TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 
-from .config import Config, load_config_from_env
-from .data_access import ensure_data_available, get_universe, get_price_data, get_fundamental_data
-from .feature_engine import FundamentalCalculator, TechnicalAnalyzer, calculate_composite_features
-from .selector_logic import EquityScreener
-from .ranking_engine import RankingEngine
+import logging as _logging
+
+try:
+    # Prefer absolute package imports when executed from backend folder
+    from selection.equity_selection_agent.src.config import Config, load_config_from_env
+    from selection.equity_selection_agent.src.data_access import ensure_data_available, get_universe, get_price_data, get_fundamental_data
+    from selection.equity_selection_agent.src.feature_engine import FundamentalCalculator, TechnicalAnalyzer, calculate_composite_features
+    from selection.equity_selection_agent.src.selector_logic import EquityScreener
+    from selection.equity_selection_agent.src.ranking_engine import RankingEngine
+    try:
+        _logging.getLogger(__name__).info("equity_selection_agent: using absolute imports 'selection.equity_selection_agent.src.<module>'")
+    except Exception:
+        pass
+except ImportError:
+    try:
+        # Fallback to package-relative imports when module is part of a package
+        from .config import Config, load_config_from_env
+        from .data_access import ensure_data_available, get_universe, get_price_data, get_fundamental_data
+        from .feature_engine import FundamentalCalculator, TechnicalAnalyzer, calculate_composite_features
+        from .selector_logic import EquityScreener
+        from .ranking_engine import RankingEngine
+        try:
+            _logging.getLogger(__name__).info("equity_selection_agent: using relative imports '.<module>'")
+        except Exception:
+            pass
+    except ImportError:
+        # Final fallback: add src directory to sys.path and retry direct imports
+        import os as _os
+        import sys as _sys
+        _CURRENT_DIR = _os.path.dirname(_os.path.abspath(__file__))
+        if _CURRENT_DIR not in _sys.path:
+            _sys.path.insert(0, _CURRENT_DIR)
+        from config import Config, load_config_from_env
+        from data_access import ensure_data_available, get_universe, get_price_data, get_fundamental_data
+        from feature_engine import FundamentalCalculator, TechnicalAnalyzer, calculate_composite_features
+        from selector_logic import EquityScreener
+        from ranking_engine import RankingEngine
+        try:
+            _logging.getLogger(__name__).info("equity_selection_agent: using sys.path fallback to current dir")
+        except Exception:
+            pass
 
 # TODO: Add tackling for avoid industries
 # State definition for the workflow

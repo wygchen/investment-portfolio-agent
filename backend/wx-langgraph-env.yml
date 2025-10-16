@@ -21,6 +21,7 @@ dependencies:
       - fastapi
       - uvicorn[standard]
       - python-multipart
+      - pydantic
       
       # Testing dependencies
       - pytest

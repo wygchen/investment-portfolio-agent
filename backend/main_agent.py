@@ -163,6 +163,7 @@ class MainAgent:
         self.setup_logging()
         self.initialize_agents()
         self.workflow = None
+        self._stream_callback = None
     
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration for the workflow"""
@@ -195,6 +196,10 @@ class MainAgent:
         log_level = self.config.get("log_level", "INFO")
         logging.getLogger().setLevel(getattr(logging, log_level))
         logger.info("Main Agent logging configured")
+    
+    def set_stream_callback(self, callback):
+        """Set the streaming callback function for real-time updates"""
+        self._stream_callback = callback
     
     def initialize_agents(self):
         """Initialize all individual agents"""
@@ -267,13 +272,27 @@ class MainAgent:
         try:
             state["current_node"] = "risk_analysis"
             
+            # Yield started event for streaming
+            if hasattr(self, '_stream_callback'):
+                await self._stream_callback("risk_analysis_started", {
+                    "progress": 30,
+                    "message": "Analyzing risk profile and generating risk blueprint..."
+                })
+            
             # Check prerequisites
             if not state.get("user_profile"):
                 raise ValueError("User profile not available from discovery node")
             
             user_profile = state["user_profile"]
             if user_profile:
-                logger.info(f"Analyzing risk profile for user: {user_profile.profile_id}")
+                # Convert UserProfile to dict if it's not already
+                if hasattr(user_profile, 'to_dict'):
+                    user_profile_dict = user_profile.to_dict()
+                elif hasattr(user_profile, '__dict__'):
+                    user_profile_dict = user_profile.__dict__
+                else:
+                    user_profile_dict = user_profile
+                logger.info(f"Analyzing risk profile for user: {user_profile_dict.get('profile_id', 'unknown')}")
             
             # Check if risk analytics agent is available
             if not self.risk_analytics_agent:
@@ -282,10 +301,18 @@ class MainAgent:
             # Create agent context
             if not user_profile:
                 raise ValueError("User profile is None")
+            
+            # Convert UserProfile to dict for agent context
+            if hasattr(user_profile, 'to_dict'):
+                user_profile_dict = user_profile.to_dict()
+            elif hasattr(user_profile, '__dict__'):
+                user_profile_dict = user_profile.__dict__
+            else:
+                user_profile_dict = user_profile
                 
             agent_context = AgentContext(
                 session_id=f"main_agent_{int(time.time())}",
-                user_assessment=user_profile.to_dict()  # Use to_dict() method
+                user_assessment=user_profile_dict
             )
             
             # Run Risk Analytics Agent
@@ -315,6 +342,17 @@ class MainAgent:
             if risk_blueprint and risk_blueprint.get('risk_capacity'):
                 logger.info(f"Risk capacity: {risk_blueprint.get('risk_capacity', {}).get('level', 'N/A')}")
             
+            # Yield complete event for streaming
+            if hasattr(self, '_stream_callback'):
+                await self._stream_callback("risk_analysis_complete", {
+                    "progress": 50,
+                    "message": "Risk analysis completed successfully",
+                    "risk_blueprint": risk_blueprint,
+                    "financial_ratios": risk_data.get("financial_ratios", {}),
+                    "risk_score": risk_data.get("risk_score", 50),
+                    "volatility_target": risk_data.get("volatility_target", 12.0)
+                })
+            
             return state
             
         except Exception as e:
@@ -324,7 +362,7 @@ class MainAgent:
             state["node_errors"]["risk_analysis"] = str(e)
             return state
 
-    def portfolio_construction_node(self, state: MainAgentState) -> MainAgentState:
+    async def portfolio_construction_node(self, state: MainAgentState) -> MainAgentState:
         """
         Node 4: Portfolio Construction - Optimize portfolio allocation for selected tickers
         
@@ -340,6 +378,13 @@ class MainAgent:
         
         try:
             state["current_node"] = "portfolio_construction"
+            
+            # Yield started event for streaming
+            if hasattr(self, '_stream_callback'):
+                await self._stream_callback("portfolio_construction_started", {
+                    "progress": 70,
+                    "message": "Optimizing portfolio allocation based on risk profile..."
+                })
             
             # Check prerequisites
             risk_blueprint = state.get("risk_blueprint")
@@ -460,6 +505,14 @@ class MainAgent:
                 logger.info(f"Volatility: {portfolio_volatility:.2%}")
                 logger.info(f"Sharpe ratio: {portfolio_sharpe:.2f}")
                 
+                # Yield complete event for streaming
+                if hasattr(self, '_stream_callback'):
+                    await self._stream_callback("portfolio_construction_complete", {
+                        "progress": 85,
+                        "message": "Portfolio optimization completed successfully",
+                        "portfolio_allocation": portfolio_allocation
+                    })
+                
                 return state
                 
             except ImportError as e:
@@ -514,7 +567,7 @@ class MainAgent:
             logger.info("✅ Portfolio construction completed with fallback due to error")
             return state
 
-    def selection_node(self, state: MainAgentState) -> MainAgentState:
+    async def selection_node(self, state: MainAgentState) -> MainAgentState:
         """
         Node 3: Selection Agent - Process selected_tickers from user profile
         
@@ -531,6 +584,13 @@ class MainAgent:
         try:
             state["current_node"] = "selection"
             
+            # Yield started event for streaming
+            if hasattr(self, '_stream_callback'):
+                await self._stream_callback("selection_started", {
+                    "progress": 60,
+                    "message": "Selecting specific securities and analyzing market conditions..."
+                })
+            
             # Check prerequisites
             risk_blueprint = state.get("risk_blueprint")
             if not risk_blueprint:
@@ -540,11 +600,19 @@ class MainAgent:
             if not user_profile:
                 raise ValueError("User profile not available")
             
+            # Convert UserProfile to dict if needed
+            if hasattr(user_profile, 'to_dict'):
+                user_profile_dict = user_profile.to_dict()
+            elif hasattr(user_profile, '__dict__'):
+                user_profile_dict = user_profile.__dict__
+            else:
+                user_profile_dict = user_profile
+            
             # Extract selected_tickers from user profile
-            selected_tickers = getattr(user_profile, 'selected_tickers', {})
+            selected_tickers = user_profile_dict.get('selected_tickers', {})
             
             # Extract regions and sectors from user profile
-            personal_values = getattr(user_profile, 'personal_values', {})
+            personal_values = user_profile_dict.get('personal_values', {})
             esg_preferences = personal_values.get("esg_preferences", {})
             
             # Default regions (can be enhanced based on user preferences)
@@ -580,6 +648,14 @@ class MainAgent:
             )
             logger.info(f"Total securities selected: {total_selections}")
             
+            # Yield complete event for streaming
+            if hasattr(self, '_stream_callback'):
+                await self._stream_callback("selection_complete", {
+                    "progress": 80,
+                    "message": "Security selection completed successfully",
+                    "security_selections": selection_result.get("final_selections", {})
+                })
+            
             return state
             
         except Exception as e:
@@ -589,7 +665,7 @@ class MainAgent:
             state["node_errors"]["selection"] = str(e)
             return state
 
-    def communication_node(self, state: MainAgentState) -> MainAgentState:
+    async def communication_node(self, state: MainAgentState) -> MainAgentState:
         """
         Node 5: Communication Agent - Generate final investment report
         
@@ -606,6 +682,13 @@ class MainAgent:
         try:
             state["current_node"] = "communication"
             
+            # Yield started event for streaming
+            if hasattr(self, '_stream_callback'):
+                await self._stream_callback("communication_started", {
+                    "progress": 90,
+                    "message": "Generating comprehensive investment report..."
+                })
+            
             # Check prerequisites
             required_data = ["user_profile", "risk_blueprint", "portfolio_allocation", "security_selections"]
             for data_key in required_data:
@@ -621,8 +704,17 @@ class MainAgent:
             communication_config = self.config.get("communication", {})
             include_qa_system = communication_config.get("include_qa_system", True)
             
+            # Convert UserProfile to dict for communication agent
+            user_profile = state.get("user_profile")
+            if user_profile and hasattr(user_profile, 'to_dict'):
+                user_profile_dict = user_profile.to_dict()
+            elif user_profile and hasattr(user_profile, '__dict__'):
+                user_profile_dict = user_profile.__dict__
+            else:
+                user_profile_dict = user_profile or {}
+            
             report_result = self.communication_agent.generate_portfolio_report(
-                user_profile=state.get("user_profile").to_dict() if state.get("user_profile") else {},
+                user_profile=user_profile_dict,
                 portfolio_data=state.get("portfolio_allocation"),
                 risk_analysis={
                     "risk_blueprint": state.get("risk_blueprint"),
@@ -645,6 +737,17 @@ class MainAgent:
             logger.info("✅ Communication completed successfully")
             logger.info(f"Report generated: {report_result.get('report', {}).get('report_title', 'Unknown')}")
             logger.info(f"Total workflow execution time: {state['execution_time']:.2f} seconds")
+            
+            # Yield complete event for streaming
+            if hasattr(self, '_stream_callback'):
+                import asyncio
+                asyncio.create_task(self._stream_callback("final_report_complete", {
+                    "progress": 100,
+                    "message": "Investment report generated successfully!",
+                    "final_report": report_result.get("report", {}),
+                    "execution_time": state["execution_time"],
+                    "status": "complete"
+                }))
             
             return state
             

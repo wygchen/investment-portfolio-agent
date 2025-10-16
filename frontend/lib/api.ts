@@ -116,6 +116,29 @@ export interface RiskMetrics {
   }>;
 }
 
+// Streaming API Types
+export interface StreamEvent {
+  event: string;
+  timestamp: string;
+  data: {
+    progress: number;
+    message: string;
+    [key: string]: any;
+  };
+}
+
+export interface StreamEventHandlers {
+  onRiskAnalysisStarted?: (data: any) => void;
+  onRiskAnalysisComplete?: (data: any) => void;
+  onSelectionStarted?: (data: any) => void;
+  onSelectionComplete?: (data: any) => void;
+  onPortfolioConstructionStarted?: (data: any) => void;
+  onPortfolioConstructionComplete?: (data: any) => void;
+  onCommunicationStarted?: (data: any) => void;
+  onFinalReportComplete?: (data: any) => void;
+  onError?: (error: string) => void;
+}
+
 // Custom API Error class
 export class APIError extends Error {
   constructor(
@@ -281,6 +304,108 @@ export const apiClient = {
     }>;
   }> {
     return apiRequest(`/api/dashboard/performance/${userId}?period=${period}`);
+  },
+
+  // Streaming API methods
+  async validateAssessment(data: AssessmentData): Promise<{
+    status: string;
+    message: string;
+  }> {
+    return apiRequest('/api/validate-assessment', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async generateReportStream(
+    data: AssessmentData,
+    handlers: StreamEventHandlers
+  ): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/api/generate-report/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP ${response.status}: ${response.statusText}`,
+        response.status,
+        response.statusText
+      );
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new APIError('No response body reader available', 0, 'Stream Error');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const eventData: StreamEvent = JSON.parse(line.substring(6));
+              this.handleStreamEvent(eventData, handlers);
+            } catch (parseError) {
+              console.warn('Failed to parse stream event:', line, parseError);
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  },
+
+  handleStreamEvent(event: StreamEvent, handlers: StreamEventHandlers): void {
+    const { event: eventType, data } = event;
+    console.log('Received stream event:', eventType, data);
+
+    switch (eventType) {
+      case 'risk_analysis_started':
+        handlers.onRiskAnalysisStarted?.(data);
+        break;
+      case 'risk_analysis_complete':
+        handlers.onRiskAnalysisComplete?.(data);
+        break;
+      case 'selection_started':
+        handlers.onSelectionStarted?.(data);
+        break;
+      case 'selection_complete':
+        handlers.onSelectionComplete?.(data);
+        break;
+      case 'portfolio_construction_started':
+        handlers.onPortfolioConstructionStarted?.(data);
+        break;
+      case 'portfolio_construction_complete':
+        handlers.onPortfolioConstructionComplete?.(data);
+        break;
+      case 'communication_started':
+        handlers.onCommunicationStarted?.(data);
+        break;
+      case 'final_report_complete':
+        handlers.onFinalReportComplete?.(data);
+        break;
+      case 'error':
+        handlers.onError?.(data.message || 'Unknown error occurred');
+        break;
+      default:
+        console.log('Unhandled stream event:', eventType, data);
+    }
   },
 };
 

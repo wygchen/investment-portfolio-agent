@@ -1,3 +1,5 @@
+"use client"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -5,6 +7,14 @@ import { ArrowRight, TrendingUp, Shield, Brain, BarChart3, Users, Zap } from "lu
 import Link from "next/link"
 
 export default function HomePage() {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted) {
+    return <div className="min-h-screen bg-background" />
+  }
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}

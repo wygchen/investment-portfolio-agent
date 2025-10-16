@@ -79,38 +79,43 @@ export function DiscoveryFlow() {
       console.log("Final Profile:", profile)
       
       try {
-        // Send profile to discovery agent backend
-        const response = await fetch('http://localhost:8000/api/process-assessment', { 
-          method: 'POST', 
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(profile) 
-        })
-        
-        if (response.ok) {
-          const result = await response.json()
-          console.log('Discovery Agent Response:', result)
-          
-          // Store the profile ID for future reference
-          localStorage.setItem('profileId', result.profile_id)
-          localStorage.setItem('investmentProfile', JSON.stringify(profile))
-          
-          alert(`Profile processed successfully! Profile ID: ${result.profile_id}`)
-        } else {
-          console.error('Failed to process profile:', response.statusText)
-          // Fallback to localStorage
-          localStorage.setItem('investmentProfile', JSON.stringify(profile))
+        // Store immediately for Generate page to read and navigate right away
+        localStorage.setItem('portfolioai_assessment', JSON.stringify(profile))
+        router.push('/generate')
+
+        // Fire-and-forget validation in background
+        const assessmentData = {
+          goals: profile.goals,
+          timeHorizon: profile.timeHorizon,
+          riskTolerance: profile.riskTolerance,
+          annualIncome: profile.annualIncome,
+          monthlySavings: profile.monthlySavings,
+          totalDebt: profile.totalDebt,
+          emergencyFundMonths: profile.emergencyFundMonths,
+          values: profile.values,
+          esgPrioritization: profile.esgPrioritization,
+          marketSelection: profile.marketSelection
         }
-        
-        // Redirect to dashboard
-        router.push('/dashboard')
+
+        fetch('http://localhost:8000/api/validate-assessment', { 
+          method: 'POST', 
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(assessmentData) 
+        }).then(async (response) => {
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}))
+            console.error('Failed to validate assessment:', errorData)
+          } else {
+            const result = await response.json().catch(() => ({}))
+            console.log('Assessment validation response:', result)
+          }
+        }).catch((e) => {
+          console.error('Error validating assessment (background):', e)
+        })
       } catch (error) {
-        console.error('Error saving profile:', error)
-        // Fallback to localStorage even if backend fails
-        localStorage.setItem('investmentProfile', JSON.stringify(profile))
-        alert('Profile saved locally. Backend may not be running.')
-        router.push('/dashboard')
+        console.error('Error preparing navigation to Generate:', error)
+        localStorage.setItem('portfolioai_assessment', JSON.stringify(profile))
+        router.push('/generate')
       }
     }
   }

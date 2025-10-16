@@ -25,40 +25,63 @@ import time
 from datetime import datetime
 from typing import List, Optional, Dict, Any, TypedDict, Set
 
-# LangGraph imports
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.state import CompiledStateGraph
+# LangGraph imports (lazy-guarded)
+try:
+    from langgraph.graph import StateGraph, START, END
+    from langgraph.graph.state import CompiledStateGraph
+    _LANGGRAPH_AVAILABLE = True
+except ImportError:
+    StateGraph = None  # type: ignore
+    START = None  # type: ignore
+    END = None  # type: ignore
+    CompiledStateGraph = None  # type: ignore
+    _LANGGRAPH_AVAILABLE = False
 
 # Import equity selection agent
 try:
-    import equity_selection_agent.src.equity_selection_agent as esa_module
+    # Prefer absolute import relative to backend folder execution
+    from selection.equity_selection_agent.src import equity_selection_agent as esa_module
     run_equity_selection = esa_module.run_agent_workflow
     EQUITY_AGENT_AVAILABLE = True
-except ImportError as import_error:
-    # Fallback if the import fails - create a mock function
-    EQUITY_AGENT_AVAILABLE = False
-    
-    # Capture the error message at module level
-    EQUITY_IMPORT_ERROR = str(import_error)
-    
-    def run_equity_selection(*args, **kwargs):
-        """Mock equity selection function when the real agent is not available"""
-        logger = logging.getLogger(__name__)
-        logger.warning(f"Using mock equity selection due to import error: {EQUITY_IMPORT_ERROR}")
+    try:
+        logging.getLogger(__name__).info("selection_agent: using absolute import 'selection.equity_selection_agent.src'")
+    except Exception:
+        pass
+except ImportError:
+    try:
+        # Fallback to package-relative import when imported as part of selection package
+        from .equity_selection_agent.src import equity_selection_agent as esa_module
+        run_equity_selection = esa_module.run_agent_workflow
+        EQUITY_AGENT_AVAILABLE = True
+        try:
+            logging.getLogger(__name__).info("selection_agent: using relative import '.equity_selection_agent.src'")
+        except Exception:
+            pass
+    except ImportError as import_error:
+        # Fallback if the import fails - create a mock function
+        EQUITY_AGENT_AVAILABLE = False
         
-        # Return mock results with exactly 3 selections
-        return {
-            'success': True,
-            'final_selection_count': 3,
-            'final_selections': [
-                {'ticker': 'AAPL', 'score': 85.0, 'sector': 'Technology', 'recommendation': 'BUY'},
-                {'ticker': 'MSFT', 'score': 82.0, 'sector': 'Technology', 'recommendation': 'BUY'},
-                {'ticker': 'GOOGL', 'score': 80.0, 'sector': 'Technology', 'recommendation': 'BUY'}
-            ],
-            'execution_time': 2.0,
-            'screening_summary': {'total_screened': 100, 'passed_screening': 25},
-            'error': None
-        }
+        # Capture the error message at module level
+        EQUITY_IMPORT_ERROR = str(import_error)
+        
+        def run_equity_selection(*args, **kwargs):
+            """Mock equity selection function when the real agent is not available"""
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Using mock equity selection due to import error: {EQUITY_IMPORT_ERROR}")
+            
+            # Return mock results with exactly 3 selections
+            return {
+                'success': True,
+                'final_selection_count': 3,
+                'final_selections': [
+                    {'ticker': 'AAPL', 'score': 85.0, 'sector': 'Technology', 'recommendation': 'BUY'},
+                    {'ticker': 'MSFT', 'score': 82.0, 'sector': 'Technology', 'recommendation': 'BUY'},
+                    {'ticker': 'GOOGL', 'score': 80.0, 'sector': 'Technology', 'recommendation': 'BUY'}
+                ],
+                'execution_time': 2.0,
+                'screening_summary': {'total_screened': 100, 'passed_screening': 25},
+                'error': None
+            }
 
 
 # =============================================================================
@@ -822,8 +845,14 @@ def aggregation_node(state: SelectionAgentState) -> SelectionAgentState:
                 logger.info(f"Added {len(tickers)} user-selected tickers for {asset_class}: {tickers}")
         
         # Add selections from agents for missing asset classes
+        key_map = {
+            "equities": "equity_results",
+            "bonds": "bonds_results",
+            "commodities": "commodity_results",
+            "gold": "gold_results",
+        }
         for asset_class in asset_classes_missing:
-            result_key = f"{asset_class}_results"
+            result_key = key_map.get(asset_class, f"{asset_class}_results")
             results = state.get(result_key)
             
             if results and results.get("success", False):
@@ -885,6 +914,8 @@ def create_selection_workflow() -> CompiledStateGraph:
     Returns:
         Compiled StateGraph ready for execution
     """
+    if not _LANGGRAPH_AVAILABLE:
+        raise ImportError("LangGraph is required to create the selection workflow. Please install 'langgraph'.")
     # Create the state graph
     workflow = StateGraph(SelectionAgentState)
     
@@ -964,6 +995,17 @@ def run_selection_agent(regions: Optional[List[str]] = None,
         workflow = create_selection_workflow()
         result = workflow.invoke(initial_state)
         
+        # Ensure JSON-serializable fields
+        if isinstance(result.get("asset_classes_present"), set):
+            result["asset_classes_present"] = list(result["asset_classes_present"])
+        if isinstance(result.get("asset_classes_missing"), set):
+            result["asset_classes_missing"] = list(result["asset_classes_missing"])
+        if isinstance(result.get("processing_summary"), dict):
+            if isinstance(result["processing_summary"].get("user_selected_classes"), set):
+                result["processing_summary"]["user_selected_classes"] = list(result["processing_summary"]["user_selected_classes"])
+            if isinstance(result["processing_summary"].get("agent_selected_classes"), set):
+                result["processing_summary"]["agent_selected_classes"] = list(result["processing_summary"]["agent_selected_classes"])
+        
         # Calculate final execution time
         result["execution_time"] = time.time() - start_time
         
@@ -979,13 +1021,14 @@ def run_selection_agent(regions: Optional[List[str]] = None,
     except Exception as e:
         error_msg = f"Selection Agent workflow failed: {str(e)}"
         logger.error(error_msg)
-        return {
+        resp = {
             'success': False,
             'error': error_msg,
             'execution_time': time.time() - start_time,
             'final_selections': {},
             'processing_summary': {}
         }
+        return resp
     
     try:
         # Create the workflow

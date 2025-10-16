@@ -59,17 +59,40 @@ const GOAL_OPTIONS = [
 export default function DashboardPage() {
   const [selectedTab, setSelectedTab] = useState("overview")
   const [userProfile, setUserProfile] = useState<any>(null)
+  const [isHydrated, setIsHydrated] = useState(false)
   const portfolioValue = 487650
   const changeAmount = 23450
   const changePercentage = 5.06
 
-  // Load user profile from localStorage
+  // Hydration check - only run on client side
   useEffect(() => {
+    setIsHydrated(true)
+  }, [])
+
+  // Load user profile from localStorage - only after hydration
+  useEffect(() => {
+    if (!isHydrated) return
+    
     const savedProfile = localStorage.getItem('investmentProfile')
     if (savedProfile) {
       setUserProfile(JSON.parse(savedProfile))
     }
-  }, [])
+  }, [isHydrated])
+
+  // Show loading state during hydration
+  if (!isHydrated) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="w-16 h-16 bg-accent/10 rounded-full flex items-center justify-center mx-auto">
+            <Brain className="w-8 h-8 text-accent animate-pulse" />
+          </div>
+          <h1 className="text-2xl font-bold">Loading Dashboard...</h1>
+          <p className="text-muted-foreground">Initializing your portfolio data</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-background">

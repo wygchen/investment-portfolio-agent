@@ -231,8 +231,11 @@ class BaseAgent(ABC):
     async def _invoke_llm_async(self, messages: List[Any]) -> Any:
         """Async wrapper for LLM invocation"""
         import asyncio
+        
+        # Run synchronous invoke in thread pool to avoid blocking
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.llm.invoke, messages)
+        response = await loop.run_in_executor(None, self.llm.invoke, messages)
+        return response
     
     async def _wait_before_retry(self, attempt: int) -> None:
         """Wait before retry with exponential backoff"""

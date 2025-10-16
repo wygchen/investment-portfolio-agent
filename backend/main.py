@@ -12,6 +12,7 @@ import uvicorn
 import logging
 import json
 import asyncio
+import time
 from datetime import datetime
 
 # Import our profile processor functions
@@ -239,12 +240,14 @@ async def generate_report_stream(assessment_data: FrontendAssessmentData):
     
     return StreamingResponse(
         generate_stream(),
-        media_type="text/plain",
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Cache-Control"
+            "Access-Control-Allow-Headers": "Cache-Control",
+            # Disable proxy buffering (e.g., Nginx) to ensure immediate flush
+            "X-Accel-Buffering": "no"
         }
     )
 
@@ -267,7 +270,7 @@ async def generate_report_from_profile_id(request_data: Dict[str, Any]):
             )
         
         # Convert dict to UserProfile object for main agent
-        from profile_processor import UserProfile
+        from profile_processor_agent import UserProfile
         user_profile_obj = UserProfile(
             goals=profile_data.get("goals", []),
             time_horizon=profile_data.get("time_horizon", 10),
@@ -534,14 +537,33 @@ def create_sse_event(event_type: str, data: dict) -> str:
         "data": data
     }
     
-    return f"data: {json.dumps(event_data)}\n\n"
+    # Handle circular references and non-serializable objects
+    def safe_serialize(obj):
+        if hasattr(obj, '__dict__'):
+            return obj.__dict__
+        elif hasattr(obj, '_asdict'):
+            return obj._asdict()
+        elif isinstance(obj, (list, tuple)):
+            return [safe_serialize(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {str(k): safe_serialize(v) for k, v in obj.items()}
+        else:
+            return str(obj)
+    
+    try:
+        # First try normal serialization
+        return f"data: {json.dumps(event_data)}\n\n"
+    except (ValueError, TypeError) as e:
+        # If circular reference or type error, use safe serialization
+        safe_data = safe_serialize(event_data)
+        return f"data: {json.dumps(safe_data)}\n\n"
 
 
 def create_user_profile_object(user_profile: dict):
     """
     Convert profile dict to UserProfile object for main agent
     """
-    from profile_processor import UserProfile
+    from profile_processor_agent import UserProfile
     
     return UserProfile(
         goals=user_profile.get("goals", []),
@@ -562,7 +584,7 @@ def create_user_profile_object(user_profile: dict):
 async def stream_main_agent_workflow(user_profile):
     """
     Stream the complete MainAgent workflow with real-time updates
-    DEMO VERSION - Using preset data instead of actual agents
+    Uses LangGraph astream() for real agent execution with preset data fallback
     """
     try:
         # Convert to UserProfile object
@@ -582,13 +604,93 @@ async def stream_main_agent_workflow(user_profile):
         logger.info(f"ESG prioritization: {user_profile.get('esg_prioritization', False)}")
         logger.info("=====================================")
         
-        # COMMENTED OUT: Original agent workflow
-        # Initialize MainAgent with streaming
-        # main_agent = MainAgent()
-        # workflow = main_agent.create_workflow()
+        # Try real agent workflow first
+        try:
+            logger.info("Attempting real agent workflow execution...")
+            main_agent = MainAgent()
+            logger.info("MainAgent created successfully")
+            
+            # Set up streaming via an event queue (avoid async generators in callback)
+            event_queue = asyncio.Queue()
+
+            async def stream_callback(event_type, data):
+                # Enqueue event for immediate flushing by streamer
+                await event_queue.put(create_sse_event(event_type, data))
+
+            main_agent.set_stream_callback(stream_callback)
+            workflow = main_agent.create_workflow()
+
+            # Initialize state for workflow
+            initial_state = {
+                "user_profile": user_profile_obj.to_dict(),
+                "risk_analysis_state": None,
+                "portfolio_construction_state": None,
+                "selection_state": None,
+                "communication_state": None,
+                "start_time": time.time(),
+                "execution_time": 0.0,
+                "current_node": "",
+                "risk_blueprint": None,
+                "portfolio_allocation": None,
+                "security_selections": None,
+                "final_report": None,
+                "success": True,
+                "error": None,
+                "node_errors": {},
+                "config": main_agent.config
+            }
+            
+            # Run the workflow in background and concurrently flush node events
+            async def run_workflow():
+                logger.info("Starting workflow execution...")
+                async for event in workflow.astream(initial_state):
+                    logger.info(f"Workflow event received: {event}")
+                    # As nodes finish, emit a synthetic node_complete as before
+                    if isinstance(event, dict):
+                        for node_name, node_data in event.items():
+                            logger.info(f"Node {node_name} completed, emitting event")
+                            
+                            # Filter out problematic data for communication node
+                            safe_data = node_data
+                            if node_name == "communication":
+                                # For communication node, only include essential data to avoid circular refs
+                                safe_data = {
+                                    "status": "completed",
+                                    "message": "Communication completed successfully"
+                                }
+                            
+                            sse_event = create_sse_event(f"{node_name}_complete", {
+                                "progress": 50 if node_name == "risk_analysis" else 
+                                           80 if node_name == "selection" else
+                                           85 if node_name == "portfolio_construction" else
+                                           100,
+                                "message": f"{node_name.replace('_', ' ').title()} completed successfully",
+                                "data": safe_data
+                            })
+                            await event_queue.put(sse_event)
+
+            workflow_task = asyncio.create_task(run_workflow())
+
+            # Stream out queued events as soon as they arrive
+            while True:
+                if workflow_task.done() and event_queue.empty():
+                    logger.info("Workflow completed and queue empty, breaking")
+                    break
+                try:
+                    queued_event = await asyncio.wait_for(event_queue.get(), timeout=0.2)
+                    logger.info(f"Yielding queued event: {queued_event[:100]}...")
+                    yield queued_event
+                except asyncio.TimeoutError:
+                    continue
+                            
+            logger.info("Real agent workflow completed successfully")
+            return
+            
+        except Exception as agent_error:
+            logger.warning(f"Real agent workflow failed: {agent_error}, falling back to preset data")
         
-        # DEMO: Using preset streaming data instead of actual agents
-        logger.info("DEMO MODE: Using preset data instead of agents")
+        # FALLBACK: Using preset streaming data if agents fail
+        logger.info("FALLBACK MODE: Using preset data due to agent failure")
         
         # Stream the workflow execution with delays to simulate processing
         current_progress = 20

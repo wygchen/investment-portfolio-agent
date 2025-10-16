@@ -12,25 +12,23 @@ try:
 except Exception:
     PYPFOPT_AVAILABLE = False               # if not available, will not do the pypfopt optimization (use normal covariance)
 import matplotlib.pyplot as plt
-from portfolio_types import PortfolioResult
+from .portfolio_types import PortfolioResult
 # import json
 
 # Import market sentiment score function
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from market_sentiment import analyze_market_sentiment
+from .market_sentiment import analyze_market_sentiment
 try:
     # Import dataclass type from dedicated module
-    from market_sentiment_types import MarketSentiment  # type: ignore
+    from .market_sentiment_types import MarketSentiment  # type: ignore
 except Exception:
     MarketSentiment = None
 # Import local preference helpers
-try:
-    from preferences import derive_preferences, equity_indices_for_tickers
-except Exception:
-    derive_preferences = None
-    equity_indices_for_tickers = None
+# Note: preferences module not available, using None values
+derive_preferences = None
+equity_indices_for_tickers = None
 
 # Section 1: Define Tickers and Time Range 
 # Asset class -> representative tickers mapping. Consumers can reference individual lists
@@ -91,9 +89,9 @@ def _select_tickers_from_profile(path: str):
         return default_tickers
 
 
+# Resolve tickers to use for portfolio construction (default to built-in universe to avoid file access on import)
 # Resolve tickers to use for portfolio construction
-# Resolve tickers to use for portfolio construction
-tickers = _select_tickers_from_profile(shared_profile_path)
+tickers = default_tickers
 
 # Set the end date to today
 end_date = datetime.today()         # get today's date
