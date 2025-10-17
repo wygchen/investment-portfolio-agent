@@ -474,7 +474,7 @@ class OutputProcessor:
             'screening_details': screening_summary,
             'selections': [asdict(selection) for selection in selections],
             'top_picks': {
-                'top_5_by_score': [asdict(s) for s in selections[:5]],
+                'top_3_by_score': [asdict(s) for s in selections[:3]],
                 'top_value_pick': None,
                 'top_quality_pick': None,
                 'top_momentum_pick': None

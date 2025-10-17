@@ -36,8 +36,8 @@ class ScreeningThresholds:
     """Quantitative screening thresholds for the layered filtering approach"""
     
     # Quality and Efficiency Thresholds
-    min_roe: float = 0.15  # Minimum 15% Return on Equity
-    min_positive_equity: bool = True  # Must have positive shareholder equity
+    min_roe: float = 0.05  # Minimum 5% Return on Equity (more reasonable threshold)
+    # Note: Positive equity filter removed since we don't have balance sheet data
     
     # Risk and Leverage Thresholds
     max_debt_equity_absolute: float = 1.5  # Maximum D/E ratio for non-financials
@@ -108,10 +108,10 @@ class OutputConfig:
     """Configuration for agent output and reporting"""
     
     # Target number of selected stocks for shortlist
-    target_stock_count: int = 25
+    target_stock_count: int = 3
     
     # Logging configuration
-    log_directory: str = "logs"
+    log_directory: str = "../logs"
     log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     log_level: str = "INFO"
     
@@ -222,7 +222,7 @@ def load_config_from_env() -> Config:
         config.output.target_stock_count = int(os.getenv("ESA_TARGET_STOCKS", "25"))
     
     if os.getenv("ESA_MIN_ROE"):
-        config.screening.min_roe = float(os.getenv("ESA_MIN_ROE", "0.15"))
+        config.screening.min_roe = float(os.getenv("ESA_MIN_ROE", "0.05"))
     
     if os.getenv("ESA_MAX_BETA"):
         config.screening.max_beta = float(os.getenv("ESA_MAX_BETA", "1.8"))

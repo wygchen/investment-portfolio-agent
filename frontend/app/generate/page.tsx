@@ -77,6 +77,9 @@ export default function GeneratePage() {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
   const [pdfDownloadUrl, setPdfDownloadUrl] = useState<string | null>(null)
   const [userId, setUserId] = useState<string>("demo_user")
+  const [riskBlueprint, setRiskBlueprint] = useState<any>(null)
+  const [portfolioAllocation, setPortfolioAllocation] = useState<any>(null)
+  const [securitySelections, setSecuritySelections] = useState<any>(null)
   
   const router = useRouter()
 
@@ -141,9 +144,10 @@ export default function GeneratePage() {
           try {
             const parsedData = JSON.parse(storedAssessment)
             setAssessmentData(parsedData)
-            // Extract user ID from assessment data
-            if (parsedData.profile_id) {
-              setUserId(parsedData.profile_id)
+            // Extract user ID from stored profile ID
+            const storedProfileId = localStorage.getItem('profileId')
+            if (storedProfileId) {
+              setUserId(storedProfileId)
             }
             return parsedData
           } catch (err) {
@@ -194,7 +198,7 @@ export default function GeneratePage() {
             setStreamMessage(event.data.message)
           }
           
-          // Update current phase based on event type
+          // Update current phase and capture intermediate data
           switch (event.event) {
             case 'profile_generation_started':
               setCurrentPhase('Profile Generation')
@@ -202,11 +206,23 @@ export default function GeneratePage() {
             case 'risk_analysis_started':
               setCurrentPhase('Risk Analysis')
               break
+            case 'risk_analysis_complete':
+              setCurrentPhase('Risk Analysis Complete')
+              setRiskBlueprint(event.data.risk_blueprint)
+              break
             case 'portfolio_construction_started':
               setCurrentPhase('Portfolio Optimization')
               break
+            case 'portfolio_construction_complete':
+              setCurrentPhase('Portfolio Optimization Complete')
+              setPortfolioAllocation(event.data.portfolio_allocation)
+              break
             case 'selection_started':
               setCurrentPhase('Security Selection')
+              break
+            case 'selection_complete':
+              setCurrentPhase('Security Selection Complete')
+              setSecuritySelections(event.data.security_selections)
               break
             case 'communication_started':
               setCurrentPhase('Report Generation')
@@ -412,6 +428,87 @@ export default function GeneratePage() {
                           </div>
                         )}
                       </div>
+                    </div>
+                  )}
+
+                  {/* Intermediate Results Display */}
+                  {riskBlueprint && (
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-sm">Risk Blueprint:</h4>
+                      <Card className="bg-muted/10">
+                        <CardContent className="p-4">
+                          <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <span className="font-medium">Risk Capacity:</span>
+                              <span className="ml-2">{riskBlueprint.risk_capacity?.level || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Risk Tolerance:</span>
+                              <span className="ml-2">{riskBlueprint.risk_tolerance?.level || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Volatility Target:</span>
+                              <span className="ml-2">{riskBlueprint.volatility_target || 'N/A'}%</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Risk Score:</span>
+                              <span className="ml-2">{riskBlueprint.risk_score || 'N/A'}/100</span>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+
+                  {portfolioAllocation && (
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-sm">Portfolio Allocation:</h4>
+                      <Card className="bg-muted/10">
+                        <CardContent className="p-4">
+                          <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <span className="font-medium">Expected Return:</span>
+                              <span className="ml-2">{(portfolioAllocation.portfolio_metrics?.expected_return * 100 || 0).toFixed(1)}%</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Volatility:</span>
+                              <span className="ml-2">{(portfolioAllocation.portfolio_metrics?.volatility * 100 || 0).toFixed(1)}%</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Sharpe Ratio:</span>
+                              <span className="ml-2">{portfolioAllocation.portfolio_metrics?.sharpe_ratio || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">ESG Allocation:</span>
+                              <span className="ml-2">{(portfolioAllocation.allocation_summary?.esg_allocation * 100 || 0).toFixed(0)}%</span>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+
+                  {securitySelections && (
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-sm">Security Selection:</h4>
+                      <Card className="bg-muted/10">
+                        <CardContent className="p-4">
+                          <div className="text-sm">
+                            <div className="mb-2">
+                              <span className="font-medium">Individual Stocks:</span>
+                              <span className="ml-2">{Object.keys(securitySelections.equity_selections || {}).length} categories</span>
+                            </div>
+                            <div className="mb-2">
+                              <span className="font-medium">ESG Screening:</span>
+                              <span className="ml-2">{securitySelections.esg_screening_results?.excluded_companies?.length || 0} companies excluded</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Selection Criteria:</span>
+                              <span className="ml-2">ESG-focused, expense ratio &lt; 0.25%</span>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
                     </div>
                   )}
                 </div>

@@ -16,20 +16,11 @@ Examples:
     python src/collect_data.py --operation load        # Just load existing data
 """
 
-import sys
 import os
 import argparse
 import logging
 
-# Try package import first, then fallback to direct import
-try:
-    from .stock_database import StockDatabase
-except ImportError:
-    # For direct script execution, add current directory to path
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    if current_dir not in sys.path:
-        sys.path.insert(0, current_dir)
-    from stock_database import StockDatabase
+from .stock_database import StockDatabase
 
 # Set up logging
 logging.basicConfig(
@@ -52,9 +43,9 @@ def main():
                        help='Operation to perform: refresh (full rebuild), update (incremental), load (use cached)')
     parser.add_argument('--db-path', default='data/stock_data.db', 
                        help='SQLite database path (default: data/stock_data.db)')
-    parser.add_argument('--include-us', action='store_true', default=False,
+    parser.add_argument('--include-us', action='store_true', default=True,
                        help='Include US tickers (default: True)')
-    parser.add_argument('--include-hk', action='store_true', default=False,
+    parser.add_argument('--include-hk', action='store_true', default=True,
                        help='Include Hong Kong tickers (default: True)')
     parser.add_argument('--fundamental-days', type=int, default=7,
                        help='Days threshold for fundamental updates (default: 7)')

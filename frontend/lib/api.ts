@@ -195,7 +195,7 @@ async function apiRequest<T>(
 export const apiClient = {
   // Health and status endpoints
   async getHealth(): Promise<{ status: string; timestamp: string }> {
-    return apiRequest('/health');
+    return apiRequest('/api/health');
   },
 
   async getStatus(): Promise<{ message: string; status: string; version: string }> {
@@ -219,13 +219,8 @@ export const apiClient = {
     return apiRequest(`/api/assessment/${userId}`);
   },
 
-  // Portfolio endpoints
-  async generatePortfolio(assessmentData: AssessmentData): Promise<PortfolioRecommendation> {
-    return apiRequest('/api/portfolio/generate', {
-      method: 'POST',
-      body: JSON.stringify(assessmentData),
-    });
-  },
+  // Portfolio endpoints - using streaming only
+  // generatePortfolio method removed - use generatePortfolioStream instead
 
   // Streaming portfolio generation with real-time updates
   async generatePortfolioStream(

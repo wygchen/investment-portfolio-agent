@@ -10,7 +10,7 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
-from mock_vector_store import get_mock_vector_store, search_portfolio_context
+from vector_store import get_vector_store, search_portfolio_context
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -37,7 +37,7 @@ class ContextAgent:
         self.top_k = top_k
         self.score_threshold = score_threshold
         self.max_context_length = max_context_length
-        self.vector_store = get_mock_vector_store()
+        self.vector_store = get_vector_store()
         
         logger.info(f"Context agent initialized with top_k={top_k}, threshold={score_threshold}")
     
@@ -60,13 +60,12 @@ class ContextAgent:
             logger.info(f"Retrieving context for user {user_id}, query: {query[:100]}...")
             
             # Search for similar chunks
-            search_result = self.vector_store.search(
+            similar_chunks = self.vector_store.search_similar_chunks(
                 user_id=user_id,
                 query=query,
-                top_k=self.top_k
+                top_k=self.top_k,
+                score_threshold=self.score_threshold
             )
-            
-            similar_chunks = search_result.get("context_chunks", [])
             
             if not similar_chunks:
                 logger.warning(f"No relevant chunks found for user {user_id}")
@@ -86,7 +85,7 @@ class ContextAgent:
             
             # Process and format chunks
             context_chunks = []
-            sources = search_result.get("sources", [])  # Use sources from search result
+            sources = []
             total_length = 0
             
             for chunk in similar_chunks:
@@ -104,8 +103,8 @@ class ContextAgent:
                 chunk_data = {
                     "content": content,
                     "score": score,
-                    "document_id": chunk.get("id", ""),
-                    "chunk_index": 0
+                    "document_id": chunk.get("document_id"),
+                    "chunk_index": chunk.get("chunk_index")
                 }
                 
                 if include_metadata:
@@ -113,6 +112,16 @@ class ContextAgent:
                 
                 context_chunks.append(chunk_data)
                 total_length += len(content)
+                
+                # Track sources
+                source = {
+                    "document_id": chunk.get("document_id"),
+                    "chunk_index": chunk.get("chunk_index"),
+                    "score": score,
+                    "section": metadata.get("Header 1", "Unknown Section"),
+                    "subsection": metadata.get("Header 2", "")
+                }
+                sources.append(source)
             
             logger.info(f"Retrieved {len(context_chunks)} context chunks, total length: {total_length}")
             

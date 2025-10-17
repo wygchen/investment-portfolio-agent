@@ -21,6 +21,7 @@ dependencies:
       - fastapi
       - uvicorn[standard]
       - python-multipart
+      - pydantic
       
       # Testing dependencies
       - pytest
@@ -34,6 +35,7 @@ dependencies:
       - pandas
       - numpy
       - scipy
+      - matplotlib
       
       # Financial data and analysis packages
       - yfinance
@@ -45,14 +47,12 @@ dependencies:
       - lxml
       - html5lib
       
+      # DuckDuckGo search for market sentiment
+      - duckduckgo-search
+      - ddgs
+      
+      # Text processing for sentiment analysis
+      - textblob
+      
       # Optional: for enhanced development
       - python-json-logger
-      
-      # Vector database and embeddings
-      - pymilvus  # Milvus Lite
-      - langchain-text-splitters  # Markdown text splitter (latest compatible version)
-      - sentence-transformers  # For embeddings
-      
-      # LangChain memory and chat
-      - langchain-community  # For additional memory backends (latest compatible version)
-      - langchain-core  # Core LangChain functionality (latest compatible version)

@@ -51,57 +51,7 @@ class FundamentalCalculator:
         
         return price / eps
     
-    def calculate_roe(self, net_income: Optional[float], shareholders_equity: Optional[float]) -> Optional[float]:
-        """
-        Calculate Return on Equity.
-        
-        Args:
-            net_income: Net income (annual)
-            shareholders_equity: Total shareholders' equity
-            
-        Returns:
-            ROE as decimal (e.g., 0.15 for 15%) or None if calculation not possible
-        """
-        if (net_income is None or shareholders_equity is None or 
-            shareholders_equity <= 0):
-            return None
-        
-        return net_income / shareholders_equity
-    
-    def calculate_debt_to_equity(self, total_liabilities: Optional[float], 
-                                shareholders_equity: Optional[float]) -> Optional[float]:
-        """
-        Calculate Debt-to-Equity ratio.
-        
-        Args:
-            total_liabilities: Total liabilities
-            shareholders_equity: Total shareholders' equity
-            
-        Returns:
-            D/E ratio or None if calculation not possible
-        """
-        if (total_liabilities is None or shareholders_equity is None or 
-            shareholders_equity <= 0):
-            return None
-        
-        return total_liabilities / shareholders_equity
-    
-    def calculate_price_to_book(self, price: Optional[float], book_value_per_share: Optional[float]) -> Optional[float]:
-        """
-        Calculate Price-to-Book ratio.
-        
-        Args:
-            price: Current stock price
-            book_value_per_share: Book value per share
-            
-        Returns:
-            P/B ratio or None if calculation not possible
-        """
-        if (price is None or book_value_per_share is None or 
-            book_value_per_share <= 0 or price <= 0):
-            return None
-        
-        return price / book_value_per_share
+    # Note: ROE, D/E, and P/B calculations removed since we use pre-calculated values from database
     
     def calculate_peg_ratio(self, pe_ratio: Optional[float], earnings_growth_rate: Optional[float]) -> Optional[float]:
         """
@@ -182,23 +132,18 @@ class FundamentalCalculator:
                 current_price = data.get('current_price') or info.get('regularMarketPrice')
                 trailing_eps = data.get('trailing_eps') or info.get('trailingEps')
                 
-                # Financial statement data
-                net_income = income_statement.get('Net Income')
-                shareholders_equity = balance_sheet.get('Stockholders Equity') or balance_sheet.get('Total Stockholder Equity')
-                total_liabilities = balance_sheet.get('Total Liabilities Net Minority Interest') or balance_sheet.get('Total Liab')
+                # Get pre-calculated metrics from database (since we don't have full financial statements)
+                roe = data.get('return_on_equity') or info.get('returnOnEquity')
+                debt_to_equity = data.get('debt_to_equity') or info.get('debtToEquity')
+                price_to_book = data.get('price_to_book') or info.get('priceToBook')
                 
-                # Book value per share (calculate if not available)
-                book_value_per_share = info.get('bookValue')
-                if book_value_per_share is None and shareholders_equity:
-                    shares_outstanding = info.get('sharesOutstanding')
-                    if shares_outstanding:
-                        book_value_per_share = shareholders_equity / shares_outstanding
-                
-                # Calculate metrics
+                # Calculate P/E ratio
                 pe_ratio = self.calculate_pe_ratio(current_price, trailing_eps)
-                roe = self.calculate_roe(net_income, shareholders_equity)
-                debt_to_equity = self.calculate_debt_to_equity(total_liabilities, shareholders_equity)
-                price_to_book = self.calculate_price_to_book(current_price, book_value_per_share)
+                
+                # Debug: Log fundamental data for first few tickers
+                if len(raw_metrics) < 3:
+                    logger.info(f"Ticker {ticker}: roe={roe}, debt_to_equity={debt_to_equity}, "
+                               f"price_to_book={price_to_book}")
                 
                 # Get other useful metrics from yfinance
                 beta = data.get('beta') or info.get('beta')
@@ -214,9 +159,7 @@ class FundamentalCalculator:
                     'debt_to_equity': debt_to_equity,
                     'price_to_book': price_to_book,
                     'beta': beta,
-                    'trailing_eps': trailing_eps,
-                    'shareholders_equity': shareholders_equity,
-                    'has_positive_equity': shareholders_equity is not None and shareholders_equity > 0
+                    'trailing_eps': trailing_eps
                 }
                 
                 raw_metrics[ticker] = metrics
@@ -446,7 +389,7 @@ class TechnicalAnalyzer:
         Process technical indicators for all tickers in the price data.
         
         Args:
-            price_data: Multi-level DataFrame with price data (from yfinance)
+            price_data: DataFrame with price data (from database or yfinance)
             market_data: Market index data for beta calculation (optional)
             
         Returns:
@@ -457,101 +400,198 @@ class TechnicalAnalyzer:
         
         results = []
         
-        # Handle single vs multiple tickers
-        if isinstance(price_data.columns, pd.MultiIndex):
-            tickers = price_data.columns.get_level_values(1).unique()
-        else:
-            # Single ticker case
-            tickers = ['SINGLE_TICKER']
-            # Restructure for consistent processing
-            price_data.columns = pd.MultiIndex.from_product([price_data.columns, ['SINGLE_TICKER']])
+        # Check if this is database format (has 'ticker' column) or yfinance format
+        if 'ticker' in price_data.columns:
+            # Database format: convert to wide format for technical analysis
+            tickers = price_data['ticker'].unique()
+            
+            for ticker in tickers:
+                try:
+                    # Filter data for this ticker
+                    ticker_data = price_data[price_data['ticker'] == ticker].copy()
+                    
+                    if len(ticker_data) < 50:  # Need minimum data for meaningful analysis
+                        logger.warning(f"Insufficient data for {ticker}")
+                        continue
+                    
+                    # Sort by date and set as index
+                    ticker_data = ticker_data.sort_values('date').set_index('date')
+                    
+                    # Get closing prices
+                    close_prices = ticker_data['close'].dropna()
+                    
+                    if len(close_prices) < 50:
+                        logger.warning(f"Insufficient closing price data for {ticker}")
+                        continue
+                    
+                    # Calculate technical indicators
+                    rsi = self.calculate_rsi(close_prices, self.config.technical.rsi_period)
+                    
+                    # MACD
+                    macd_data = self.calculate_macd(
+                        close_prices, 
+                        self.config.technical.macd_fast,
+                        self.config.technical.macd_slow,
+                        self.config.technical.macd_signal
+                    )
+                    
+                    # Bollinger Bands
+                    bb_data = self.calculate_bollinger_bands(
+                        close_prices,
+                        self.config.technical.bb_period,
+                        self.config.technical.bb_std
+                    )
+                    
+                    # Simple Moving Averages
+                    sma_50 = self.calculate_sma(close_prices, self.config.technical.sma_short)
+                    sma_200 = self.calculate_sma(close_prices, self.config.technical.sma_long)
+                    
+                    # Get current (latest) values
+                    current_price = close_prices.iloc[-1]
+                    current_rsi = rsi.iloc[-1] if not rsi.empty else None
+                    current_sma_50 = sma_50.iloc[-1] if not sma_50.empty else None
+                    current_sma_200 = sma_200.iloc[-1] if not sma_200.empty else None
+                    
+                    # MACD signals
+                    macd_columns = list(macd_data.columns)
+                    macd_line = macd_data[macd_columns[0]].iloc[-1] if len(macd_columns) > 0 else None
+                    macd_signal = macd_data[macd_columns[1]].iloc[-1] if len(macd_columns) > 1 else None
+                    macd_histogram = macd_data[macd_columns[2]].iloc[-1] if len(macd_columns) > 2 else None
+                    
+                    # Calculate beta if market data available
+                    beta = None
+                    if market_data is not None and not market_data.empty:
+                        market_close = market_data['Close'] if 'Close' in market_data.columns else market_data.iloc[:, 0]
+                        beta = self.calculate_beta(close_prices, market_close)
+                    
+                    # Technical signals
+                    price_above_sma50 = current_sma_50 is not None and current_price > current_sma_50
+                    price_above_sma200 = current_sma_200 is not None and current_price > current_sma_200
+                    macd_bullish = (macd_line is not None and macd_signal is not None and 
+                                   macd_line > macd_signal)
+                    rsi_overbought = current_rsi is not None and current_rsi > self.config.screening.max_rsi_overbought
+                    
+                    # Compile results
+                    technical_metrics = {
+                        'ticker': ticker,
+                        'current_price': current_price,
+                        'rsi': current_rsi,
+                        'sma_50': current_sma_50,
+                        'sma_200': current_sma_200,
+                        'macd_line': macd_line,
+                        'macd_signal': macd_signal,
+                        'macd_histogram': macd_histogram,
+                        'beta': beta,
+                        'price_above_sma50': price_above_sma50,
+                        'price_above_sma200': price_above_sma200,
+                        'macd_bullish': macd_bullish,
+                        'rsi_overbought': rsi_overbought,
+                        'positive_trend': price_above_sma50 or macd_bullish,
+                        'meets_rsi_threshold': not rsi_overbought if current_rsi is not None else True
+                    }
+                    
+                    results.append(technical_metrics)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing technical data for {ticker}: {e}")
+                    continue
         
-        for ticker in tickers:
-            try:
-                # Extract price data for this ticker
-                if ticker in price_data.columns.get_level_values(1):
-                    ticker_data = price_data.xs(ticker, axis=1, level=1)
-                else:
+        else:
+            # yfinance format: handle multi-level columns
+            if isinstance(price_data.columns, pd.MultiIndex):
+                tickers = price_data.columns.get_level_values(1).unique()
+            else:
+                # Single ticker case
+                tickers = ['SINGLE_TICKER']
+                # Restructure for consistent processing
+                price_data.columns = pd.MultiIndex.from_product([price_data.columns, ['SINGLE_TICKER']])
+            
+            for ticker in tickers:
+                try:
+                    # Extract price data for this ticker
+                    if ticker in price_data.columns.get_level_values(1):
+                        ticker_data = price_data.xs(ticker, axis=1, level=1)
+                    else:
+                        continue
+                    
+                    # Get closing prices
+                    close_prices = ticker_data['Close'].dropna()
+                    
+                    if len(close_prices) < 50:  # Need minimum data for meaningful analysis
+                        logger.warning(f"Insufficient data for {ticker}")
+                        continue
+                    
+                    # Calculate technical indicators
+                    rsi = self.calculate_rsi(close_prices, self.config.technical.rsi_period)
+                    
+                    # MACD
+                    macd_data = self.calculate_macd(
+                        close_prices, 
+                        self.config.technical.macd_fast,
+                        self.config.technical.macd_slow,
+                        self.config.technical.macd_signal
+                    )
+                    
+                    # Bollinger Bands
+                    bb_data = self.calculate_bollinger_bands(
+                        close_prices,
+                        self.config.technical.bb_period,
+                        self.config.technical.bb_std
+                    )
+                    
+                    # Simple Moving Averages
+                    sma_50 = self.calculate_sma(close_prices, self.config.technical.sma_short)
+                    sma_200 = self.calculate_sma(close_prices, self.config.technical.sma_long)
+                    
+                    # Get current (latest) values
+                    current_price = close_prices.iloc[-1]
+                    current_rsi = rsi.iloc[-1] if not rsi.empty else None
+                    current_sma_50 = sma_50.iloc[-1] if not sma_50.empty else None
+                    current_sma_200 = sma_200.iloc[-1] if not sma_200.empty else None
+                    
+                    # MACD signals
+                    macd_columns = list(macd_data.columns)
+                    macd_line = macd_data[macd_columns[0]].iloc[-1] if len(macd_columns) > 0 else None
+                    macd_signal = macd_data[macd_columns[1]].iloc[-1] if len(macd_columns) > 1 else None
+                    macd_histogram = macd_data[macd_columns[2]].iloc[-1] if len(macd_columns) > 2 else None
+                    
+                    # Calculate beta if market data available
+                    beta = None
+                    if market_data is not None and not market_data.empty:
+                        market_close = market_data['Close'] if 'Close' in market_data.columns else market_data.iloc[:, 0]
+                        beta = self.calculate_beta(close_prices, market_close)
+                    
+                    # Technical signals
+                    price_above_sma50 = current_sma_50 is not None and current_price > current_sma_50
+                    price_above_sma200 = current_sma_200 is not None and current_price > current_sma_200
+                    macd_bullish = (macd_line is not None and macd_signal is not None and 
+                                   macd_line > macd_signal)
+                    rsi_overbought = current_rsi is not None and current_rsi > self.config.screening.max_rsi_overbought
+                    
+                    # Compile results
+                    technical_metrics = {
+                        'ticker': ticker,
+                        'current_price': current_price,
+                        'rsi': current_rsi,
+                        'sma_50': current_sma_50,
+                        'sma_200': current_sma_200,
+                        'macd_line': macd_line,
+                        'macd_signal': macd_signal,
+                        'macd_histogram': macd_histogram,
+                        'beta': beta,
+                        'price_above_sma50': price_above_sma50,
+                        'price_above_sma200': price_above_sma200,
+                        'macd_bullish': macd_bullish,
+                        'rsi_overbought': rsi_overbought,
+                        'positive_trend': price_above_sma50 or macd_bullish,
+                        'meets_rsi_threshold': not rsi_overbought if current_rsi is not None else True
+                    }
+                    
+                    results.append(technical_metrics)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing technical data for {ticker}: {e}")
                     continue
-                
-                # Get closing prices
-                close_prices = ticker_data['Close'].dropna()
-                
-                if len(close_prices) < 50:  # Need minimum data for meaningful analysis
-                    logger.warning(f"Insufficient data for {ticker}")
-                    continue
-                
-                # Calculate technical indicators
-                rsi = self.calculate_rsi(close_prices, self.config.technical.rsi_period)
-                
-                # MACD
-                macd_data = self.calculate_macd(
-                    close_prices, 
-                    self.config.technical.macd_fast,
-                    self.config.technical.macd_slow,
-                    self.config.technical.macd_signal
-                )
-                
-                # Bollinger Bands
-                bb_data = self.calculate_bollinger_bands(
-                    close_prices,
-                    self.config.technical.bb_period,
-                    self.config.technical.bb_std
-                )
-                
-                # Simple Moving Averages
-                sma_50 = self.calculate_sma(close_prices, self.config.technical.sma_short)
-                sma_200 = self.calculate_sma(close_prices, self.config.technical.sma_long)
-                
-                # Get current (latest) values
-                current_price = close_prices.iloc[-1]
-                current_rsi = rsi.iloc[-1] if not rsi.empty else None
-                current_sma_50 = sma_50.iloc[-1] if not sma_50.empty else None
-                current_sma_200 = sma_200.iloc[-1] if not sma_200.empty else None
-                
-                # MACD signals
-                macd_columns = list(macd_data.columns)
-                macd_line = macd_data[macd_columns[0]].iloc[-1] if len(macd_columns) > 0 else None
-                macd_signal = macd_data[macd_columns[1]].iloc[-1] if len(macd_columns) > 1 else None
-                macd_histogram = macd_data[macd_columns[2]].iloc[-1] if len(macd_columns) > 2 else None
-                
-                # Calculate beta if market data available
-                beta = None
-                if market_data is not None and not market_data.empty:
-                    market_close = market_data['Close'] if 'Close' in market_data.columns else market_data.iloc[:, 0]
-                    beta = self.calculate_beta(close_prices, market_close)
-                
-                # Technical signals
-                price_above_sma50 = current_sma_50 is not None and current_price > current_sma_50
-                price_above_sma200 = current_sma_200 is not None and current_price > current_sma_200
-                macd_bullish = (macd_line is not None and macd_signal is not None and 
-                               macd_line > macd_signal)
-                rsi_overbought = current_rsi is not None and current_rsi > self.config.screening.max_rsi_overbought
-                
-                # Compile results
-                technical_metrics = {
-                    'ticker': ticker,
-                    'current_price': current_price,
-                    'rsi': current_rsi,
-                    'sma_50': current_sma_50,
-                    'sma_200': current_sma_200,
-                    'macd_line': macd_line,
-                    'macd_signal': macd_signal,
-                    'macd_histogram': macd_histogram,
-                    'beta': beta,
-                    'price_above_sma50': price_above_sma50,
-                    'price_above_sma200': price_above_sma200,
-                    'macd_bullish': macd_bullish,
-                    'rsi_overbought': rsi_overbought,
-                    'positive_trend': price_above_sma50 or macd_bullish,
-                    'meets_rsi_threshold': not rsi_overbought if current_rsi is not None else True
-                }
-                
-                results.append(technical_metrics)
-                
-            except Exception as e:
-                logger.error(f"Error processing technical data for {ticker}: {e}")
-                continue
         
         results_df = pd.DataFrame(results)
         logger.info(f"Processed technical data for {len(results_df)} tickers")

@@ -24,16 +24,49 @@ from typing import List, Optional, Dict, Any, TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 
-# Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+import logging as _logging
 
-from src.config import Config, load_config_from_env
-from src.data_access import ensure_data_available, get_universe, get_price_data, get_fundamental_data
-from src.feature_engine import FundamentalCalculator, TechnicalAnalyzer, calculate_composite_features
-from src.selector_logic import EquityScreener
-from src.ranking_engine import RankingEngine
+try:
+    # Prefer absolute package imports when executed from backend folder
+    from selection.equity_selection_agent.src.config import Config, load_config_from_env
+    from selection.equity_selection_agent.src.data_access import ensure_data_available, get_universe, get_price_data, get_fundamental_data
+    from selection.equity_selection_agent.src.feature_engine import FundamentalCalculator, TechnicalAnalyzer, calculate_composite_features
+    from selection.equity_selection_agent.src.selector_logic import EquityScreener
+    from selection.equity_selection_agent.src.ranking_engine import RankingEngine
+    try:
+        _logging.getLogger(__name__).info("equity_selection_agent: using absolute imports 'selection.equity_selection_agent.src.<module>'")
+    except Exception:
+        pass
+except ImportError:
+    try:
+        # Fallback to package-relative imports when module is part of a package
+        from .config import Config, load_config_from_env
+        from .data_access import ensure_data_available, get_universe, get_price_data, get_fundamental_data
+        from .feature_engine import FundamentalCalculator, TechnicalAnalyzer, calculate_composite_features
+        from .selector_logic import EquityScreener
+        from .ranking_engine import RankingEngine
+        try:
+            _logging.getLogger(__name__).info("equity_selection_agent: using relative imports '.<module>'")
+        except Exception:
+            pass
+    except ImportError:
+        # Final fallback: add src directory to sys.path and retry direct imports
+        import os as _os
+        import sys as _sys
+        _CURRENT_DIR = _os.path.dirname(_os.path.abspath(__file__))
+        if _CURRENT_DIR not in _sys.path:
+            _sys.path.insert(0, _CURRENT_DIR)
+        from config import Config, load_config_from_env
+        from data_access import ensure_data_available, get_universe, get_price_data, get_fundamental_data
+        from feature_engine import FundamentalCalculator, TechnicalAnalyzer, calculate_composite_features
+        from selector_logic import EquityScreener
+        from ranking_engine import RankingEngine
+        try:
+            _logging.getLogger(__name__).info("equity_selection_agent: using sys.path fallback to current dir")
+        except Exception:
+            pass
 
-
+# TODO: Add tackling for avoid industries
 # State definition for the workflow
 class EquitySelectionAgentState(TypedDict):
     """State object that flows through the workflow nodes"""
@@ -41,7 +74,6 @@ class EquitySelectionAgentState(TypedDict):
     config: Config
     regions: Optional[List[str]]
     sectors: Optional[List[str]]
-    enable_qualitative: bool
     force_refresh: bool
     start_time: float
     
@@ -101,17 +133,8 @@ def data_loading_node(state: EquitySelectionAgentState) -> EquitySelectionAgentS
     logger.info("="*50)
     
     try:
-        config = state["config"]
         regions = state["regions"]
-        force_refresh = state["force_refresh"]
-        
-        # Ensure data is available and fresh
-        logger.info("Ensuring data availability...")
-        max_age_hours = 1 if force_refresh else 24  # Force refresh if requested
-        data_available = ensure_data_available(max_age_hours=max_age_hours)
-        
-        if not data_available:
-            raise Exception("Failed to ensure data availability")
+        sectors = state["sectors"]
         
         # Load universe data
         logger.info("Loading universe data...")
@@ -124,6 +147,15 @@ def data_loading_node(state: EquitySelectionAgentState) -> EquitySelectionAgentS
         if regions:
             logger.info(f"Filtering universe by regions: {regions}")
             universe_df = universe_df[universe_df['region'].isin(regions)]
+
+        # Filter by sectors if specified
+        if sectors:
+            logger.info(f"Filtering universe by sectors: {sectors}")
+            filtered_by_sector = universe_df[universe_df['sector'].isin(sectors)]
+            if filtered_by_sector is None or filtered_by_sector.empty:
+                logger.info("No equities for the requested sectors.")
+            else:
+                universe_df = filtered_by_sector
         
         initial_universe_size = len(universe_df)
         logger.info(f"Loaded universe: {initial_universe_size} stocks")
@@ -251,9 +283,6 @@ def screening_node(state: EquitySelectionAgentState) -> EquitySelectionAgentStat
         config = state["config"]
         combined_features = state["combined_features"]
         fundamental_data = state["fundamental_data"]
-        regions = state["regions"]
-        sectors = state["sectors"]
-        enable_qualitative = state["enable_qualitative"]
         
         # Validate inputs
         if combined_features is None:
@@ -264,23 +293,16 @@ def screening_node(state: EquitySelectionAgentState) -> EquitySelectionAgentStat
         # Initialize screener
         screener = EquityScreener(config)
         
-        # Enable qualitative analysis if requested
-        if enable_qualitative:
-            screener.enable_qualitative_analysis(True)
-        
         # Apply screening pipeline
         screened_data = screener.apply_full_screening_pipeline(
-            combined_features,
-            allowed_regions=regions,
-            allowed_sectors=sectors
+            combined_features
         )
         
-        # Add qualitative scores
-        if enable_qualitative:
-            logger.info("Adding qualitative analysis...")
-            screened_data = screener.add_qualitative_scores(
-                screened_data, fundamental_data
-            )
+        # Always add qualitative scores
+        logger.info("Adding qualitative analysis...")
+        screened_data = screener.add_qualitative_scores(
+            screened_data, fundamental_data
+        )
         
         logger.info(f"Screening completed: {len(screened_data)} stocks survived")
         
@@ -362,11 +384,11 @@ def ranking_selection_node(state: EquitySelectionAgentState) -> EquitySelectionA
         logger.info(f"Final selection: {len(final_selections)} stocks")
         logger.info(f"Success rate: {len(final_selections)/initial_universe_size*100:.1f}%")
         
-        # Top 5 selections preview
+        # Top 3 selections preview
         if hasattr(final_selections, 'empty') and not final_selections.empty:
-            logger.info("\nTOP 5 SELECTIONS:")
+            logger.info("\nTOP 3 SELECTIONS:")
             logger.info("-" * 40)
-            for i, (_, row) in enumerate(final_selections.head(5).iterrows(), 1):
+            for i, (_, row) in enumerate(final_selections.head(3).iterrows(), 1):
                 score = row.get('final_score', 0)
                 ticker = row.get('ticker', 'Unknown')
                 sector = row.get('sector', 'Unknown')
@@ -422,7 +444,6 @@ def create_workflow() -> CompiledStateGraph:
 
 def run_agent_workflow(regions: Optional[List[str]] = None,
                       sectors: Optional[List[str]] = None,
-                      enable_qualitative: bool = False,
                       force_refresh: bool = False,
                       config: Optional[Config] = None) -> Dict[str, Any]:
     """
@@ -431,7 +452,6 @@ def run_agent_workflow(regions: Optional[List[str]] = None,
     Args:
         regions: List of allowed regions ('US', 'HK', etc.)
         sectors: List of allowed sectors
-        enable_qualitative: Whether to enable qualitative analysis
         force_refresh: Force refresh of cached data
         config: Configuration object (uses default if None)
         
@@ -451,7 +471,6 @@ def run_agent_workflow(regions: Optional[List[str]] = None,
     logger.info(f"Target stock count: {config.output.target_stock_count}")
     logger.info(f"Allowed regions: {regions or 'All'}")
     logger.info(f"Allowed sectors: {sectors or 'All'}")
-    logger.info(f"Qualitative analysis: {'Enabled' if enable_qualitative else 'Disabled'}")
     
     try:
         # Create the workflow
@@ -463,7 +482,6 @@ def run_agent_workflow(regions: Optional[List[str]] = None,
             "config": config,
             "regions": regions,
             "sectors": sectors,
-            "enable_qualitative": enable_qualitative,
             "force_refresh": force_refresh,
             "start_time": start_time,
             
@@ -536,7 +554,7 @@ def main() -> int:
         setup_logging(config)
         
         # Run the agent workflow with default settings
-        results = run_agent_workflow(config=config)
+        results = run_agent_workflow(config=config, regions=['US'], sectors=['Information Technology'])
         
         # Return appropriate exit code
         return 0 if results['success'] else 1

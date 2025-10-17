@@ -12,61 +12,45 @@ try:
 except Exception:
     PYPFOPT_AVAILABLE = False               # if not available, will not do the pypfopt optimization (use normal covariance)
 import matplotlib.pyplot as plt
-from portfolio_types import PortfolioResult
+from .portfolio_types import PortfolioResult
 # import json
 
 # Import market sentiment score function
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from market_sentiment import analyze_market_sentiment
+from .market_sentiment import analyze_market_sentiment
 try:
     # Import dataclass type from dedicated module
-    from market_sentiment_types import MarketSentiment  # type: ignore
+    from .market_sentiment_types import MarketSentiment  # type: ignore
 except Exception:
     MarketSentiment = None
 # Import local preference helpers
-try:
-    from preferences import derive_preferences, equity_indices_for_tickers
-except Exception:
-    derive_preferences = None
-    equity_indices_for_tickers = None
+# Note: preferences module not available, using None values
+derive_preferences = None
+equity_indices_for_tickers = None
 
 # Section 1: Define Tickers and Time Range 
-# Default tickers (used when no profile exists or parsing fails)
-# Updated to match main.py preset data with individual stocks and ETFs
-DEFAULT_TICKERS = [
-    # ETF Holdings
-    'VTI',    # Vanguard Total Stock Market ETF
-    'VXUS',   # Vanguard Total International Stock ETF  
-    'ESGV',   # Vanguard ESG U.S. Stock ETF
-    'BND',    # Vanguard Total Bond Market ETF
-    'VTEB',   # Vanguard Tax-Exempt Bond ETF
-    'VNQ',    # Vanguard Real Estate ETF
-    'ICLN',   # iShares Global Clean Energy ETF
-    # Individual Technology Stocks
-    'MSFT',   # Microsoft Corporation
-    'GOOGL',  # Alphabet Inc Class A
-    'AAPL',   # Apple Inc
-    'NVDA',   # NVIDIA Corporation
-    # Individual Renewable Energy Stocks
-    'NEE',    # NextEra Energy Inc
-    'TSLA',   # Tesla Inc
-    'ENPH',   # Enphase Energy Inc
-    # Individual International Stocks
-    'ASML',   # ASML Holding NV ADR
-    'TSM',    # Taiwan Semiconductor Manufacturing ADR
-    # Individual Real Estate Stock
-    'PLD'     # Prologis Inc
-]
-""" Updated portfolio universe includes:
-    - Core ETFs for diversification (VTI, VXUS, ESGV, BND, VTEB, VNQ, ICLN)
-    - Individual technology stocks (MSFT, GOOGL, AAPL, NVDA) 
-    - Renewable energy stocks (NEE, TSLA, ENPH)
-    - International individual stocks (ASML, TSM)
-    - ESG-focused selections avoiding tobacco/weapons
-    - Mix of ETFs (61%) and individual stocks (39%) for balanced approach
-"""
+# Asset class -> representative tickers mapping. Consumers can reference individual lists
+# or use default_tickers (flattened across classes) when no profile exists.
+asset_class_tickers = {
+    'US_EQUITIES': ['VTI', 'SPY', 'IVV'],           # Total US vs S&P 500
+    'HONG_KONG_EQUITIES': ['EWH', 'FXI', 'YINN'],   # Hong Kong only ETFs
+    'BONDS': ['BND', 'AGG', 'BNDW'],                # US Bonds vs Global Bonds
+    'REITS': ['VNQ', 'SCHH', 'IYR'],                # US REITs
+    'COMMODITIES': ['DBC', 'GSG', 'PDBC'],          # Broad commodities
+    'CRYPTO': ['BTC-USD', 'GBTC', 'BITO'],          # Direct crypto vs ETFs
+}
+
+# Default tickers (flattened list across asset classes). Order preserved; duplicates removed.
+seen = set()
+default_tickers = []
+for assets in asset_class_tickers.values():
+    for t in assets:
+        if t not in seen:
+            seen.add(t)
+            default_tickers.append(t)
+
 
 
 # Try to load market selection from the latest discovery profile saved by DiscoveryAgent
@@ -76,13 +60,13 @@ def _select_tickers_from_profile(path: str):
     """Read a discovery profile JSON and return a list of tickers based on market_selection.
 
     Expected `market_selection` values in the profile: list containing any of 'US', 'HK'.
-    Returns DEFAULT_TICKERS on error or unknown selection.
+    Returns default_tickers on error or unknown selection.
     """
     try:
         import json
         if not os.path.exists(path):
             print(f"Discovery profile not found at {path}; using default tickers")
-            return DEFAULT_TICKERS
+            return default_tickers
         with open(path, 'r') as f:
             profile = json.load(f)
         market_selection = profile.get('market_selection') or profile.get('marketSelection') or []
@@ -90,37 +74,24 @@ def _select_tickers_from_profile(path: str):
         market_selection = [m.upper() for m in market_selection if isinstance(m, str)]
         tickers = []
         if 'US' in market_selection:
-            # US equity/ETF basket with individual stocks - matching main.py preset data
-            tickers.extend([
-                # Core US ETFs
-                'VTI', 'ESGV', 'BND', 'VTEB', 'VNQ', 'ICLN',
-                # Individual US Technology Stocks  
-                'MSFT', 'GOOGL', 'AAPL', 'NVDA',
-                # US Renewable Energy Stocks
-                'NEE', 'TSLA', 'ENPH',
-                # US Real Estate Stock
-                'PLD'
-            ])
+            # US equity/ETF basket
+            tickers.extend(['SPY', 'QQQ'])
         if 'HK' in market_selection:
             # Common Hong Kong tickers (HKEX listings use .HK suffix)
             # These are example large-cap HK tickers; adjust as needed for your data sources
             tickers.extend(['0700.HK', '0988.HK', '0939.HK', 'EWH'])
-        
-        # Add international components if US is selected (global diversification)
-        if 'US' in market_selection:
-            tickers.extend(['VXUS', 'ASML', 'TSM'])  # International ETF + individual stocks
-            
         # If user asked for other markets or list is empty, fall back to defaults
         if not tickers:
-            return DEFAULT_TICKERS
+            return default_tickers
         return tickers
     except Exception as e:
         print(f"Failed to read discovery profile ({e}); using default tickers")
-        return DEFAULT_TICKERS
+        return default_tickers
 
 
+# Resolve tickers to use for portfolio construction (default to built-in universe to avoid file access on import)
 # Resolve tickers to use for portfolio construction
-tickers = _select_tickers_from_profile(shared_profile_path)
+tickers = default_tickers
 
 # Set the end date to today
 end_date = datetime.today()         # get today's date
@@ -419,6 +390,137 @@ def run_optimization(method="pypfopt", cov_method="ledoit_wolf", max_bounds_to_t
 # Run optimization (default: use PyPortfolioOpt if available)
 opt_method = "pypfopt" if PYPFOPT_AVAILABLE else "scipy"
 optimal_weights, cov_matrix = run_optimization(method=opt_method, cov_method=("ledoit_wolf" if PYPFOPT_AVAILABLE else "sample"), max_bounds_to_test=max_bounds_to_test)
+
+def run_optimization_with_tickers(tickers, method="pypfopt", cov_method="ledoit_wolf", max_bounds_to_test=None):
+    """
+    Run portfolio optimization with specific tickers.
+    
+    Args:
+        tickers: List of ticker symbols to include in optimization
+        method: 'pypfopt' or 'scipy' optimization method
+        cov_method: Covariance estimation method
+        max_bounds_to_test: List of upper bounds to test
+        
+    Returns:
+        Tuple of (optimal_weights, cov_matrix)
+    """
+    global adj_close_df, log_returns
+    
+    if max_bounds_to_test is None:
+        max_bounds_to_test = [0.2, 0.3, 0.4, 0.5]
+    
+    # Filter data to only include specified tickers
+    if not all(ticker in adj_close_df.columns for ticker in tickers):
+        # Download missing ticker data
+        for ticker in tickers:
+            if ticker not in adj_close_df.columns:
+                try:
+                    data = yf.download(ticker, start=start_date, end=end_date)
+                    adj_close_df[ticker] = data['Close']
+                except Exception as e:
+                    print(f"Warning: Could not download data for {ticker}: {e}")
+        
+        # Recalculate log returns with new tickers
+        log_returns = np.log(adj_close_df / adj_close_df.shift(1))
+        log_returns = log_returns.dropna()
+    
+    # Filter to only use specified tickers
+    available_tickers = [t for t in tickers if t in adj_close_df.columns]
+    if not available_tickers:
+        # Fallback: use equal weights
+        return ([1.0/len(tickers) for _ in tickers], np.eye(len(tickers)))
+    
+    ticker_log_returns = log_returns[available_tickers]
+    ticker_cov = compute_cov_matrix(ticker_log_returns, method=cov_method)
+    
+    # Get market sentiment for these tickers
+    sentiment_results = analyze_market_sentiment(available_tickers)
+    try:
+        ticker_sentiment = np.array([_extract_avg_score(r) for r in sentiment_results], dtype=float)
+        if ticker_sentiment.shape[0] != len(available_tickers):
+            ticker_sentiment = np.full(len(available_tickers), 0.0)
+    except Exception:
+        ticker_sentiment = np.full(len(available_tickers), 0.0)
+    
+    if method == "pypfopt" and PYPFOPT_AVAILABLE:
+        # Use PyPortfolioOpt
+        try:
+            mu = expected_returns.mean_historical_return(adj_close_df[available_tickers])
+            
+            best_sharpe = -np.inf
+            best_weights = None
+            
+            for max_bound in max_bounds_to_test:
+                try:
+                    ef = EfficientFrontier(mu, ticker_cov, weight_bounds=(0, max_bound))
+                    weights = ef.max_sharpe()
+                    weights_array = np.array([weights.get(ticker, 0.0) for ticker in available_tickers])
+                    
+                    # Calculate Sharpe ratio
+                    portfolio_return = expected_return(weights_array, ticker_log_returns, ticker_sentiment)
+                    portfolio_volatility = standard_deviation(weights_array, ticker_cov)
+                    current_sharpe = (portfolio_return - risk_free_rate) / portfolio_volatility if portfolio_volatility > 0 else 0
+                    
+                    if current_sharpe > best_sharpe:
+                        best_sharpe = current_sharpe
+                        best_weights = weights_array
+                        
+                except Exception as e:
+                    print(f"PyPortfolioOpt failed for bound {max_bound}: {e}")
+                    continue
+            
+            if best_weights is not None:
+                # Pad with zeros for missing tickers
+                result_weights = []
+                for ticker in tickers:
+                    if ticker in available_tickers:
+                        idx = available_tickers.index(ticker)
+                        result_weights.append(best_weights[idx])
+                    else:
+                        result_weights.append(0.0)
+                
+                return result_weights, ticker_cov
+                
+        except Exception as e:
+            print(f"PyPortfolioOpt optimization failed: {e}")
+    
+    # Fallback to SciPy optimization
+    try:
+        # Determine equity indices for these tickers
+        if equity_indices_for_tickers is not None:
+            eq_idx = equity_indices_for_tickers(available_tickers)
+        else:
+            eq_idx = [i for i, t in enumerate(available_tickers) if t not in ("BND", "GLD")]
+        
+        best_bound, optimized_results = find_best_bound(
+            max_bounds_to_test,
+            available_tickers,
+            ticker_log_returns,
+            ticker_cov,
+            risk_free_rate,
+            ticker_sentiment,
+            user_risk_tolerance,
+            target_equity_allocation=target_equity_allocation,
+            equity_indices=eq_idx,
+        )
+        
+        if optimized_results is not None:
+            # Pad with zeros for missing tickers
+            result_weights = []
+            for ticker in tickers:
+                if ticker in available_tickers:
+                    idx = available_tickers.index(ticker)
+                    result_weights.append(optimized_results.x[idx])
+                else:
+                    result_weights.append(0.0)
+            
+            return result_weights, ticker_cov
+            
+    except Exception as e:
+        print(f"SciPy optimization failed: {e}")
+    
+    # Final fallback: equal weights
+    return ([1.0/len(tickers) for _ in tickers], np.eye(len(tickers)))
 """
 This will test each max bound for all assets and select the one with the highest Sharpe ratio.
 """
@@ -464,16 +566,42 @@ try:
     # full mapping of all tickers to their final weights
     weights_map_full = {t: float(w) for t, w in zip(tickers, optimal_weights)}
 
-    portfolio_result = PortfolioResult(
-        tickers=tickers,
-        weights=list(optimal_weights),
-        covariance_matrix=cov_matrix if 'cov_matrix' in globals() else None,
-        expected_return=float(optimal_portfolio_return),
-        volatility=float(optimal_portfolio_volatility),
-        sharpe_ratio=float(optimal_sharpe_ratio),
-        risk_free_rate=float(risk_free_rate),
-        weights_map=weights_map_full,
-    )
+    # Compute allocation by the predefined asset classes (asset_class_tickers)
+    try:
+        # Build reverse mapping ticker -> asset class name (first match wins)
+        ticker_to_class = {}
+        for class_name, tlist in asset_class_tickers.items():
+            for t in tlist:
+                if t not in ticker_to_class:
+                    ticker_to_class[t] = class_name
+
+        # Sum weights per class; tickers not in mapping go into 'OTHER'
+        asset_class_allocations = {cn: 0.0 for cn in asset_class_tickers.keys()}
+        asset_class_allocations['OTHER'] = 0.0
+        for t, w in weights_map_full.items():
+            cls = ticker_to_class.get(t)
+            if cls is None:
+                asset_class_allocations['OTHER'] += float(w)
+            else:
+                asset_class_allocations[cls] += float(w)
+
+        portfolio_result = PortfolioResult(
+            tickers=tickers,
+            weights=list(optimal_weights),
+            covariance_matrix=cov_matrix if 'cov_matrix' in globals() else None,
+            expected_return=float(optimal_portfolio_return),
+            volatility=float(optimal_portfolio_volatility),
+            sharpe_ratio=float(optimal_sharpe_ratio),
+            risk_free_rate=float(risk_free_rate),
+            weights_map=weights_map_full,
+            asset_class_allocations=asset_class_allocations,
+        )
+        # Print the allocation by asset class
+        print("\nAsset class allocations:")
+        for cls, alloc in asset_class_allocations.items():
+            print(f"  {cls}: {alloc:.4f}")
+    except Exception as e:
+        print("Failed to compute asset-class allocations:", e)
     '''
     # Print JSON-friendly dict of portfolio result
     print(json.dumps(portfolio_result.to_dict(), indent=2))

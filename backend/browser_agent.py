@@ -46,11 +46,8 @@ class BrowserAgent:
         
         # Initialize WatsonX client if credentials provided
         self.watsonx_client = None
-        # Check for API key from environment
-        env_api_key = os.getenv('WATSONX_APIKEY') or os.getenv('WATSONX_API_KEY')
-        if env_api_key:
-            self.api_key = env_api_key
-            self.watsonx_client = "available"  # Mark as available for browser agent
+        if self.api_key and self.url and self.project_id:
+            self._initialize_watsonx_client()
         
         logger.info("Browser agent initialized")
     
@@ -100,12 +97,8 @@ class BrowserAgent:
             
             # If WatsonX client is available, use it
             if self.watsonx_client:
-                logger.info(f"Using WatsonX for search: {query}")
-                result = self._search_with_watsonx(query, search_type, max_results, include_metadata)
-                logger.info(f"WatsonX search result: {len(result.get('results', []))} results")
-                return result
+                return self._search_with_watsonx(query, search_type, max_results, include_metadata)
             else:
-                logger.info(f"WatsonX not available, using mock results for: {query}")
                 # Fallback to mock search results
                 return self._mock_search_results(query, search_type, max_results, include_metadata)
                 
@@ -137,15 +130,11 @@ class BrowserAgent:
             import requests
             import os
             
-            logger.info(f"Starting WatsonX search for: {query}")
-            
             # Get API key from environment variable
-            api_key = os.getenv('WATSONX_APIKEY') or os.getenv('WATSONX_API_KEY')
+            api_key = os.getenv('WATSONX_API_KEY')
             if not api_key:
-                logger.error("WATSONX_APIKEY or WATSONX_API_KEY environment variable not set")
+                logger.error("WATSONX_API_KEY environment variable not set")
                 return self._mock_search_results(query, search_type, max_results, include_metadata)
-            
-            logger.info("API key found, getting access token...")
             
             # Get access token
             token_response = requests.post(
@@ -187,37 +176,24 @@ class BrowserAgent:
             }
             
             # Make request to WatsonX browser agent
-            logger.info(f"Making WatsonX API call for: {query}")
             response_scoring = requests.post(
                 'https://us-south.ml.cloud.ibm.com/ml/v4/deployments/15b1893d-c71b-432f-9bd8-11647cda2700/ai_service_stream?version=2021-05-01',
                 json=payload_scoring,
                 headers={'Authorization': 'Bearer ' + mltoken}
             )
             
-            logger.info(f"WatsonX API response status: {response_scoring.status_code}")
-            
             if response_scoring.status_code != 200:
                 logger.error(f"WatsonX API request failed: {response_scoring.text}")
                 return self._mock_search_results(query, search_type, max_results, include_metadata)
             
-            # Parse the response (WatsonX returns streaming response)
-            logger.info("Parsing WatsonX streaming response...")
-            response_text = response_scoring.text
-            logger.info(f"Response length: {len(response_text)} characters")
-            
-            # Try to parse as streaming response first
-            logger.info(f"First 500 characters of response: {response_text[:500]}")
-            results = self._parse_watsonx_text_response(response_text, query, search_type)
-            logger.info(f"Parsed results count: {len(results)}")
-            
-            # If no results from streaming, try JSON parsing as fallback
-            if not results:
-                try:
-                    response_data = response_scoring.json()
-                    results = self._parse_watsonx_browser_response(response_data, query, search_type)
-                except ValueError:
-                    logger.warning("Failed to parse as JSON, using empty results")
-                    results = []
+            # Parse the response
+            try:
+                response_data = response_scoring.json()
+                results = self._parse_watsonx_browser_response(response_data, query, search_type)
+            except ValueError:
+                # If JSON parsing fails, try to extract from text response
+                response_text = response_scoring.text
+                results = self._parse_watsonx_text_response(response_text, query, search_type)
             
             return {
                 "query": query,
@@ -306,10 +282,10 @@ class BrowserAgent:
     
     def _extract_results_from_text(self, text: str, query: str, search_type: str) -> List[Dict[str, Any]]:
         """
-        Extract search results from WatsonX streaming response.
+        Extract search results from unstructured text response.
         
         Args:
-            text: Raw text response (SSE format)
+            text: Raw text response
             query: Original search query
             search_type: Type of search performed
             
@@ -317,80 +293,42 @@ class BrowserAgent:
             List of structured search results
         """
         try:
-            import json
-            import re
-            
             results = []
+            lines = text.strip().split('\n')
             
-            # Parse Server-Sent Events format
-            events = text.split('\n\n')
-            
-            for event in events:
-                if not event.strip():
+            current_result = {}
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    if current_result:
+                        results.append(current_result)
+                        current_result = {}
                     continue
-                    
-                lines = event.strip().split('\n')
-                event_data = None
                 
-                for line in lines:
-                    if line.startswith('data: '):
-                        try:
-                            event_data = json.loads(line[6:])  # Remove 'data: ' prefix
-                            break
-                        except json.JSONDecodeError:
-                            continue
-                
-                if event_data and 'choices' in event_data:
-                    for choice in event_data['choices']:
-                        if 'delta' in choice:
-                            delta = choice['delta']
-                            
-                            # Look for tool calls with search results
-                            if 'tool_calls' in delta:
-                                tool_calls = delta['tool_calls']
-                                for tool_call in tool_calls:
-                                    if tool_call.get('type') == 'function' and tool_call.get('function', {}).get('name') == 'GoogleSearch':
-                                        content = tool_call.get('function', {}).get('content', '')
-                                        if content:
-                                            try:
-                                                # Parse the search results from the tool call content
-                                                search_results = json.loads(content)
-                                                if isinstance(search_results, list):
-                                                    for result in search_results:
-                                                        if isinstance(result, dict) and 'title' in result and 'url' in result:
-                                                            results.append({
-                                                                'title': result.get('title', ''),
-                                                                'url': result.get('url', ''),
-                                                                'snippet': result.get('description', result.get('snippet', '')),
-                                                                'relevance_score': 0.9,  # High relevance for WatsonX results
-                                                                'source': 'WatsonX Browser Agent',
-                                                                'date': None
-                                                            })
-                                            except (json.JSONDecodeError, KeyError) as e:
-                                                logger.warning(f"Failed to parse search results: {e}")
-                                                continue
-                            
-                            # Also check for direct content in tool role
-                            elif delta.get('role') == 'tool':
-                                content = delta.get('content', '')
-                                if content:
-                                    try:
-                                        # Parse the search results from the tool content
-                                        search_results = json.loads(content)
-                                        if isinstance(search_results, list):
-                                            for result in search_results:
-                                                if isinstance(result, dict) and 'title' in result and 'url' in result:
-                                                    results.append({
-                                                        'title': result.get('title', ''),
-                                                        'url': result.get('url', ''),
-                                                        'snippet': result.get('description', result.get('snippet', '')),
-                                                        'relevance_score': 0.9,  # High relevance for WatsonX results
-                                                        'source': 'WatsonX Browser Agent',
-                                                        'date': None
-                                                    })
-                                    except (json.JSONDecodeError, KeyError) as e:
-                                        logger.warning(f"Failed to parse tool content: {e}")
-                                        continue
+                # Try to extract structured information
+                if line.startswith('Title:') or line.startswith('**Title:'):
+                    current_result['title'] = line.replace('Title:', '').replace('**Title:', '').strip()
+                elif line.startswith('URL:') or line.startswith('**URL:'):
+                    current_result['url'] = line.replace('URL:', '').replace('**URL:', '').strip()
+                elif line.startswith('Snippet:') or line.startswith('**Snippet:'):
+                    current_result['snippet'] = line.replace('Snippet:', '').replace('**Snippet:', '').strip()
+                elif line.startswith('Score:') or line.startswith('**Score:'):
+                    try:
+                        current_result['relevance_score'] = float(line.replace('Score:', '').replace('**Score:', '').strip())
+                    except ValueError:
+                        current_result['relevance_score'] = 0.8
+                elif line.startswith('Source:') or line.startswith('**Source:'):
+                    current_result['source'] = line.replace('Source:', '').replace('**Source:', '').strip()
+                else:
+                    # If no specific field, treat as snippet if we don't have one
+                    if 'snippet' not in current_result:
+                        current_result['snippet'] = line
+                    else:
+                        current_result['snippet'] += ' ' + line
+            
+            # Add the last result if exists
+            if current_result:
+                results.append(current_result)
             
             # Ensure all results have required fields
             for result in results:

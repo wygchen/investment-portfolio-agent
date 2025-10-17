@@ -26,6 +26,7 @@ Usage:
 """
 
 import sqlite3
+from numpy._core.numeric import True_
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -35,12 +36,7 @@ import os
 from pathlib import Path
 import yfinance as yfc
 
-# Import from same package
-try:
-    from .stock_universe import TickerManager, StockDataFetcher
-except ImportError:
-    # Fallback for direct script execution
-    from stock_universe import TickerManager, StockDataFetcher
+from .stock_universe import TickerManager, StockDataFetcher
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +124,7 @@ class StockDatabase:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_price_ticker ON price_data(ticker)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_universe_active ON universe(is_active)")
             
-    def refresh_universe(self, include_us: bool = True, include_hk: bool = False) -> pd.DataFrame:
+    def refresh_universe(self, include_us: bool = True, include_hk: bool = True) -> pd.DataFrame:
         """
         Complete universe refresh - rebuild everything.
         Use when S&P 500 composition changes.
@@ -243,16 +239,24 @@ class StockDatabase:
                 # Determine start date
                 last_date = last_dates.get(ticker)
                 if last_date:
-                    # Convert to datetime and add 1 day
-                    last_dt = pd.to_datetime(last_date)
-                    start_date = (last_dt + timedelta(days=1)).strftime('%Y-%m-%d')
-                    
-                    # Skip if already up to date
-                    if start_date > datetime.now().strftime('%Y-%m-%d'):
-                        continue
+                    try:
+                        # Convert to datetime and add 1 day
+                        last_dt = pd.to_datetime(last_date)
+                        start_date = (last_dt + timedelta(days=1)).strftime('%Y-%m-%d')
                         
-                    period = None
-                    start = start_date
+                        # Skip if already up to date (same day or future)
+                        current_date = datetime.now().strftime('%Y-%m-%d')
+                        if start_date >= current_date:
+                            logger.debug(f"Skipping {ticker} - already up to date (last: {last_date}, start: {start_date}, current: {current_date})")
+                            continue
+                            
+                        period = None
+                        start = start_date
+                    except Exception as e:
+                        logger.warning(f"Error parsing last date for {ticker}: {last_date}, error: {e}")
+                        # Fallback to period-based fetch
+                        period = "1y"
+                        start = None
                 else:
                     # No existing data, get full year
                     period = "1y"
@@ -265,7 +269,28 @@ class StockDatabase:
                 if period:
                     data = stock.history(period=period, interval="1d")
                 else:
-                    data = stock.history(start=start, interval="1d")
+                    # Add explicit end date to avoid invalid date range errors
+                    end_date = datetime.now().strftime('%Y-%m-%d')
+                    try:
+                        # Validate start date format before passing to yfinance
+                        if start:
+                            # Ensure start date is not in the future
+                            start_dt = pd.to_datetime(start)
+                            end_dt = pd.to_datetime(end_date)
+                            if start_dt > end_dt:
+                                logger.warning(f"Start date {start} is after end date {end_date} for {ticker}, using period-based fetch")
+                                data = stock.history(period="1y", interval="1d")
+                            else:
+                                # Convert dates to datetime objects for yfinance
+                                start_datetime = pd.to_datetime(start)
+                                end_datetime = pd.to_datetime(end_date)
+                                data = stock.history(start=start_datetime, end=end_datetime, interval="1d")
+                        else:
+                            data = stock.history(period="1y", interval="1d")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch data for {ticker} with date range {start} to {end_date}: {e}")
+                        # Fallback to period-based fetch
+                        data = stock.history(period="1y", interval="1d")
                 
                 if not data.empty:
                     # Prepare data for database

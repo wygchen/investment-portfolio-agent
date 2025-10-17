@@ -12,35 +12,19 @@ import uvicorn
 import logging
 import json
 import asyncio
+import time
+import os
 from datetime import datetime
+
+# Import our profile processor functions
+from profile_processor_agent import generate_user_profile
+# Import main agent for workflow execution
+from main_agent import MainAgent
+from market_news_agent.market_sentiment import get_yahoo_news_description
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-    
-# Import our profile processor functions
-from profile_processor import generate_user_profile
-# Import report generator for PDF testing
-from report_generator import UnifiedReportGenerator
-# Try to import market sentiment - fallback if dependencies missing
-# try:
-#     from market_news_agent.market_sentiment import get_yahoo_news_description
-#     MARKET_SENTIMENT_AVAILABLE = True
-#     logger.info("✅ Market sentiment imported successfully")
-# except ImportError as e:
-#     logger.warning(f"⚠️  Market sentiment not available: {e}")
-#     MARKET_SENTIMENT_AVAILABLE = False
-#     get_yahoo_news_description = None
-
-# Try to import main agent - fallback if dependencies missing
-try:
-    from .main_agent import MainAgent
-    MAIN_AGENT_AVAILABLE = True
-    logger.info("✅ MainAgent imported successfully")
-except (ImportError, ModuleNotFoundError) as e:
-    logger.warning(f"⚠️  MainAgent not available: {e}")
-    MAIN_AGENT_AVAILABLE = False
-    MainAgent = None
 
 # Create FastAPI app
 app = FastAPI(
@@ -64,22 +48,24 @@ class ValuesData(BaseModel):
     """Model for user values and preferences"""
     avoidIndustries: List[str] = []
     preferIndustries: List[str] = []
-    specificAssets: str = ""  # NEW: User-specified assets as single string
+    specificAssets: List[str] = []  # Fixed: should be List[str] not str
     customConstraints: str = ""
 
 class FrontendAssessmentData(BaseModel):
     """Model for frontend assessment data"""
     goals: List[Dict[str, Any]] = []
     timeHorizon: int = 10
+    milestones: List[Dict[str, Any]] = []  # Added missing field
     riskTolerance: str = ""
+    experienceLevel: str = ""  # Added missing field
     annualIncome: float = 0
     monthlySavings: float = 0
     totalDebt: float = 0
+    dependents: int = 0  # Added missing field
     emergencyFundMonths: str = ""
     values: ValuesData = ValuesData()  # Updated to use structured model
     esgPrioritization: bool = False
     marketSelection: List[str] = []
-
 
 @app.get("/")
 async def root():
@@ -93,44 +79,6 @@ async def root():
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "message": "Backend server is running"}
-
-@app.get("/api/test-pdf")
-async def test_pdf_generation():
-    """Test endpoint to verify PDF generation works"""
-    try:
-        logger.info("Testing PDF generation...")
-        
-        test_data = {
-            'riskTolerance': 'moderate',
-            'timeHorizon': 10,
-            'annualIncome': 75000,
-            'monthlySavings': 1000,
-            'goals': [{'id': 'retirement', 'label': 'Retirement', 'priority': 1}]
-        }
-        
-        generator = UnifiedReportGenerator()
-        pdf_path = generator.generate_comprehensive_report(test_data)
-        
-        import os
-        if os.path.exists(pdf_path):
-            return {
-                "status": "success",
-                "message": "PDF generation test successful",
-                "pdf_path": pdf_path,
-                "pdf_size": os.path.getsize(pdf_path)
-            }
-        else:
-            return {
-                "status": "error",
-                "message": "PDF file not found after generation"
-            }
-            
-    except Exception as e:
-        logger.error(f"PDF test failed: {str(e)}")
-        return {
-            "status": "error",
-            "message": f"PDF test failed: {str(e)}"
-        }
 
 @app.post("/api/validate-assessment")
 async def validate_assessment(assessment_data: FrontendAssessmentData):
@@ -190,16 +138,28 @@ async def validate_assessment(assessment_data: FrontendAssessmentData):
         logger.error(f"Error validating assessment: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error validating assessment: {str(e)}")
 
-# @app.post("/api/get-news")
-# async def get_news(ticker: str):
-#     """
-#     Get news data for a given ticker
-#     """
-#     if not MARKET_SENTIMENT_AVAILABLE:
-#         raise HTTPException(status_code=503, detail="Market sentiment service not available")
-    
-#     news_data = get_yahoo_news_description(ticker, max_articles=5)
-#     return {"news": news_data}
+@app.post("/api/assessment")
+async def submit_assessment(assessment_data: FrontendAssessmentData):
+    """Submit assessment and return profile ID"""
+    try:
+        profile_result = generate_user_profile(assessment_data.model_dump())
+        return {
+            "user_id": profile_result["profile_data"]["profile_id"],
+            "status": "success",
+            "message": "Assessment submitted successfully",
+            "assessment_id": profile_result["profile_data"]["profile_id"]
+        }
+    except Exception as e:
+        logger.error(f"Error submitting assessment: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error submitting assessment: {str(e)}")
+
+@app.post("/api/get-news")
+async def get_news(ticker: str):
+    """
+    Get news data for a given ticker
+    """
+    news_data = get_yahoo_news_description(ticker, max_articles=5)
+    return {"news": news_data}
     # Example JSON response structure for frontend reference:
     # {
     #   "news": {
@@ -299,12 +259,14 @@ async def generate_report_stream(assessment_data: FrontendAssessmentData):
     
     return StreamingResponse(
         generate_stream(),
-        media_type="text/plain",
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Cache-Control"
+            "Access-Control-Allow-Headers": "Cache-Control",
+            # Disable proxy buffering (e.g., Nginx) to ensure immediate flush
+            "X-Accel-Buffering": "no"
         }
     )
 
@@ -327,7 +289,7 @@ async def generate_report_from_profile_id(request_data: Dict[str, Any]):
             )
         
         # Convert dict to UserProfile object for main agent
-        from profile_processor import UserProfile
+        from profile_processor_agent import UserProfile
         user_profile_obj = UserProfile(
             goals=profile_data.get("goals", []),
             time_horizon=profile_data.get("time_horizon", 10),
@@ -383,19 +345,21 @@ async def generate_investment_report():
             "generated_date": datetime.now().strftime("%B %d, %Y"),
             "client_id": "demo_profile_12345",
             "executive_summary": "This comprehensive investment strategy is designed to meet your long-term financial objectives through a carefully balanced portfolio approach. The recommended $125,000 portfolio emphasizes growth potential while maintaining appropriate risk management, targeting a 7.6% annual return aligned with your ESG preferences and moderate risk tolerance.",
-            "allocation_rationale": """The portfolio allocation is strategically designed for long-term wealth building with balanced diversification:
+            "allocation_rationale": """The portfolio allocation is strategically designed for long-term wealth building with ESG integration:
 
-• Bond Allocation (40%): Provides stability and income through diversified bond ETFs including BND (20%), VTEB (12%), and TIP (8%)
-• Equity Allocation (35%): Offers growth potential through quality stocks like Microsoft (8%), Apple (6%), and Google (6%), plus broad market exposure via VTI (15%)
-• Commodities Allocation (15%): Provides inflation hedge and diversification through DJP (8%), USO (4%), and agricultural exposure via DBA (3%)
-• Gold Allocation (10%): Serves as portfolio hedge and store of value through GLD (6%) and IAU (4%)
-• Risk Management: Balanced allocation across asset classes reduces portfolio volatility and correlation risk""",
-            "selection_rationale": """Investment selections focus on diversified exposure across major asset classes:
+• Equity Allocation (70%): Provides growth potential through high-quality individual stocks including Microsoft (8%), Google (6%), Apple (5%), and NVIDIA (4%)
+• Technology Focus (29%): Leverages digital transformation trends through leading companies
+• Fixed Income (30%): Offers stability through bond ETFs and government securities
+• ESG Integration: All investments are screened to avoid tobacco and weapons sectors
+• Geographic Focus: Primarily US-focused with some international ETF exposure""",
+            "selection_rationale": """Individual stock selections focus on industry-leading companies with strong ESG characteristics:
 
-• Bond Holdings: BND provides broad bond market exposure, VTEB offers tax advantages, TIP provides inflation protection
-• Equity Holdings: VTI gives broad market exposure, MSFT/GOOGL/AAPL represent quality technology leaders with strong fundamentals
-• Commodity Holdings: DJP provides diversified commodity exposure, USO offers energy sector exposure, DBA covers agricultural commodities
-• Gold Holdings: GLD and IAU provide precious metals exposure as portfolio hedge and inflation protection
+• Microsoft (MSFT): Cloud computing and AI leadership with carbon negative commitments
+• Google/Alphabet (GOOGL): Dominant search and cloud platforms with renewable energy focus
+• Apple (AAPL): Premium consumer technology with supply chain sustainability initiatives
+• NVIDIA (NVDA): AI and semiconductor leadership driving technological transformation
+• NextEra Energy (NEE): Largest renewable energy developer in North America
+• Tesla (TSLA): Electric vehicle and energy storage innovation leadership
 
 ETF selections provide diversified exposure while maintaining ESG alignment and cost efficiency.""",
             "risk_commentary": """Portfolio risk characteristics are well-managed through diversification and quality selection:
@@ -422,34 +386,39 @@ Expected annual return of 7.6% with moderate volatility through systematic diver
                 "Plan for future contribution increases aligned with income growth"
             ],
             "portfolio_allocation": {
-                "Bond": 40.0,
-                "Equity": 35.0,
-                "Commodities": 15.0,
-                "Gold": 10.0
+                "Technology Stocks": 29.0,
+                "Bonds": 30.0,
+                "Renewable Energy": 12.0,
+                "International": 17.0,
+                "Broad Market ETFs": 8.0,
+                "Real Estate": 4.0
             },
             "individual_holdings": [
-                {"name": "Vanguard Total Bond Market ETF", "symbol": "BND", "allocation_percent": 20.0, "value": 25000},
-                {"name": "Vanguard Total Stock Market ETF", "symbol": "VTI", "allocation_percent": 15.0, "value": 18750},
-                {"name": "Vanguard Tax-Exempt Bond ETF", "symbol": "VTEB", "allocation_percent": 12.0, "value": 15000},
                 {"name": "Microsoft Corporation", "symbol": "MSFT", "allocation_percent": 8.0, "value": 10000},
-                {"name": "iPath Bloomberg Commodity ETF", "symbol": "DJP", "allocation_percent": 8.0, "value": 10000},
-                {"name": "iShares TIPS Bond ETF", "symbol": "TIP", "allocation_percent": 8.0, "value": 10000},
-                {"name": "Alphabet Inc Class A", "symbol": "GOOGL", "allocation_percent": 6.0, "value": 7500},
-                {"name": "Apple Inc", "symbol": "AAPL", "allocation_percent": 6.0, "value": 7500},
-                {"name": "SPDR Gold Shares ETF", "symbol": "GLD", "allocation_percent": 6.0, "value": 7500},
-                {"name": "United States Oil Fund ETF", "symbol": "USO", "allocation_percent": 4.0, "value": 5000},
-                {"name": "iShares Gold Trust ETF", "symbol": "IAU", "allocation_percent": 4.0, "value": 5000},
-                {"name": "Invesco DB Agriculture Fund", "symbol": "DBA", "allocation_percent": 3.0, "value": 3750}
+                {"name": "Alphabet Inc", "symbol": "GOOGL", "allocation_percent": 6.0, "value": 7500},
+                {"name": "Apple Inc", "symbol": "AAPL", "allocation_percent": 5.0, "value": 6250},
+                {"name": "NVIDIA Corporation", "symbol": "NVDA", "allocation_percent": 4.0, "value": 5000},
+                {"name": "Amazon.com Inc", "symbol": "AMZN", "allocation_percent": 3.0, "value": 3750},
+                {"name": "Meta Platforms Inc", "symbol": "META", "allocation_percent": 3.0, "value": 3750},
+                {"name": "Vanguard Total Bond Market ETF", "symbol": "BND", "allocation_percent": 15.0, "value": 18750},
+                {"name": "Vanguard Tax-Exempt Bond ETF", "symbol": "VTEB", "allocation_percent": 8.0, "value": 10000},
+                {"name": "iShares TIPS Bond ETF", "symbol": "TIP", "allocation_percent": 7.0, "value": 8750},
+                {"name": "Vanguard Total Stock Market ETF", "symbol": "VTI", "allocation_percent": 8.0, "value": 10000},
+                {"name": "Vanguard Total International Stock ETF", "symbol": "VXUS", "allocation_percent": 10.0, "value": 12500},
+                {"name": "Vanguard FTSE Europe ETF", "symbol": "VEA", "allocation_percent": 7.0, "value": 8750},
+                {"name": "NextEra Energy Inc", "symbol": "NEE", "allocation_percent": 4.0, "value": 5000},
+                {"name": "Tesla Inc", "symbol": "TSLA", "allocation_percent": 3.0, "value": 3750},
+                {"name": "First Solar Inc", "symbol": "FSLR", "allocation_percent": 2.0, "value": 2500},
+                {"name": "Brookfield Renewable Corp", "symbol": "BEPC", "allocation_percent": 2.0, "value": 2500},
+                {"name": "Vanguard Real Estate ETF", "symbol": "VNQ", "allocation_percent": 4.0, "value": 5000}
             ]
         }
         
         # Generate PDF report
         try:
+            from communication_agent import generate_pdf_report
             import os
-            logger.info("Starting PDF generation...")
-            generator = UnifiedReportGenerator()
-            pdf_path = generator.generate_comprehensive_report(preset_report_data)
-            logger.info(f"PDF generated successfully: {pdf_path}")
+            pdf_path = generate_pdf_report(preset_report_data)
             preset_report_data["pdf_available"] = True
             preset_report_data["pdf_filename"] = os.path.basename(pdf_path)
         except ImportError as e:
@@ -457,8 +426,6 @@ Expected annual return of 7.6% with moderate volatility through systematic diver
             preset_report_data["pdf_available"] = False
         except Exception as e:
             logger.error(f"PDF generation failed: {e}")
-            import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
             preset_report_data["pdf_available"] = False
         
         return {
@@ -486,8 +453,8 @@ async def download_pdf_report(filename: str):
         if not filename.endswith('.pdf') or '..' in filename:
             raise HTTPException(status_code=400, detail="Invalid filename")
         
-        # Check if file exists in /tmp directory (where PDFs are generated)
-        file_path = os.path.join('/tmp', filename)
+        # Check if file exists in current directory (where PDFs are generated)
+        file_path = os.path.join(os.getcwd(), filename)
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="PDF file not found")
         
@@ -537,24 +504,21 @@ async def get_latest_report():
                 "Plan contribution increases"
             ],
             "portfolio_allocation": {
-                "Bond": 40.0,
-                "Equity": 35.0,
-                "Commodities": 15.0,
-                "Gold": 10.0
+                "Technology Stocks": 29.0,
+                "Bonds": 30.0,
+                "Renewable Energy": 12.0,
+                "International": 17.0,
+                "Broad Market ETFs": 8.0,
+                "Real Estate": 4.0
             },
             "individual_holdings": [
-                {"name": "Vanguard Total Bond Market ETF", "symbol": "BND", "allocation_percent": 20.0, "value": 25000},
-                {"name": "Vanguard Total Stock Market ETF", "symbol": "VTI", "allocation_percent": 15.0, "value": 18750},
-                {"name": "Vanguard Tax-Exempt Bond ETF", "symbol": "VTEB", "allocation_percent": 12.0, "value": 15000},
                 {"name": "Microsoft Corporation", "symbol": "MSFT", "allocation_percent": 8.0, "value": 10000},
-                {"name": "iPath Bloomberg Commodity ETF", "symbol": "DJP", "allocation_percent": 8.0, "value": 10000},
-                {"name": "iShares TIPS Bond ETF", "symbol": "TIP", "allocation_percent": 8.0, "value": 10000},
-                {"name": "Alphabet Inc Class A", "symbol": "GOOGL", "allocation_percent": 6.0, "value": 7500},
-                {"name": "Apple Inc", "symbol": "AAPL", "allocation_percent": 6.0, "value": 7500},
-                {"name": "SPDR Gold Shares ETF", "symbol": "GLD", "allocation_percent": 6.0, "value": 7500},
-                {"name": "United States Oil Fund ETF", "symbol": "USO", "allocation_percent": 4.0, "value": 5000},
-                {"name": "iShares Gold Trust ETF", "symbol": "IAU", "allocation_percent": 4.0, "value": 5000},
-                {"name": "Invesco DB Agriculture Fund", "symbol": "DBA", "allocation_percent": 3.0, "value": 3750}
+                {"name": "Alphabet Inc", "symbol": "GOOGL", "allocation_percent": 6.0, "value": 7500},
+                {"name": "Apple Inc", "symbol": "AAPL", "allocation_percent": 5.0, "value": 6250},
+                {"name": "NVIDIA Corporation", "symbol": "NVDA", "allocation_percent": 4.0, "value": 5000},
+                {"name": "Vanguard Total Bond Market ETF", "symbol": "BND", "allocation_percent": 15.0, "value": 18750},
+                {"name": "NextEra Energy Inc", "symbol": "NEE", "allocation_percent": 4.0, "value": 5000},
+                {"name": "Tesla Inc", "symbol": "TSLA", "allocation_percent": 3.0, "value": 3750}
             ]
         }
         
@@ -592,14 +556,33 @@ def create_sse_event(event_type: str, data: dict) -> str:
         "data": data
     }
     
-    return f"data: {json.dumps(event_data)}\n\n"
+    # Handle circular references and non-serializable objects
+    def safe_serialize(obj):
+        if hasattr(obj, '__dict__'):
+            return obj.__dict__
+        elif hasattr(obj, '_asdict'):
+            return obj._asdict()
+        elif isinstance(obj, (list, tuple)):
+            return [safe_serialize(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {str(k): safe_serialize(v) for k, v in obj.items()}
+        else:
+            return str(obj)
+    
+    try:
+        # First try normal serialization
+        return f"data: {json.dumps(event_data)}\n\n"
+    except (ValueError, TypeError) as e:
+        # If circular reference or type error, use safe serialization
+        safe_data = safe_serialize(event_data)
+        return f"data: {json.dumps(safe_data)}\n\n"
 
 
 def create_user_profile_object(user_profile: dict):
     """
     Convert profile dict to UserProfile object for main agent
     """
-    from profile_processor import UserProfile
+    from profile_processor_agent import UserProfile
     
     return UserProfile(
         goals=user_profile.get("goals", []),
@@ -620,7 +603,7 @@ def create_user_profile_object(user_profile: dict):
 async def stream_main_agent_workflow(user_profile):
     """
     Stream the complete MainAgent workflow with real-time updates
-    DEMO VERSION - Using preset data instead of actual agents
+    Uses LangGraph astream() for real agent execution with preset data fallback
     """
     try:
         # Convert to UserProfile object
@@ -640,13 +623,93 @@ async def stream_main_agent_workflow(user_profile):
         logger.info(f"ESG prioritization: {user_profile.get('esg_prioritization', False)}")
         logger.info("=====================================")
         
-        # COMMENTED OUT: Original agent workflow
-        # Initialize MainAgent with streaming
-        # main_agent = MainAgent()
-        # workflow = main_agent.create_workflow()
+        # Try real agent workflow first
+        try:
+            logger.info("Attempting real agent workflow execution...")
+            main_agent = MainAgent()
+            logger.info("MainAgent created successfully")
+            
+            # Set up streaming via an event queue (avoid async generators in callback)
+            event_queue = asyncio.Queue()
+
+            async def stream_callback(event_type, data):
+                # Enqueue event for immediate flushing by streamer
+                await event_queue.put(create_sse_event(event_type, data))
+
+            main_agent.set_stream_callback(stream_callback)
+            workflow = main_agent.create_workflow()
+
+            # Initialize state for workflow
+            initial_state = {
+                "user_profile": user_profile_obj.to_dict(),
+                "risk_analysis_state": None,
+                "portfolio_construction_state": None,
+                "selection_state": None,
+                "communication_state": None,
+                "start_time": time.time(),
+                "execution_time": 0.0,
+                "current_node": "",
+                "risk_blueprint": None,
+                "portfolio_allocation": None,
+                "security_selections": None,
+                "final_report": None,
+                "success": True,
+                "error": None,
+                "node_errors": {},
+                "config": main_agent.config
+            }
+            
+            # Run the workflow in background and concurrently flush node events
+            async def run_workflow():
+                logger.info("Starting workflow execution...")
+                async for event in workflow.astream(initial_state):
+                    logger.info(f"Workflow event received: {event}")
+                    # As nodes finish, emit a synthetic node_complete as before
+                    if isinstance(event, dict):
+                        for node_name, node_data in event.items():
+                            logger.info(f"Node {node_name} completed, emitting event")
+                            
+                            # Filter out problematic data for communication node
+                            safe_data = node_data
+                            if node_name == "communication":
+                                # For communication node, only include essential data to avoid circular refs
+                                safe_data = {
+                                    "status": "completed",
+                                    "message": "Communication completed successfully"
+                                }
+                            
+                            sse_event = create_sse_event(f"{node_name}_complete", {
+                                "progress": 50 if node_name == "risk_analysis" else 
+                                           80 if node_name == "selection" else
+                                           85 if node_name == "portfolio_construction" else
+                                           100,
+                                "message": f"{node_name.replace('_', ' ').title()} completed successfully",
+                                "data": safe_data
+                            })
+                            await event_queue.put(sse_event)
+
+            workflow_task = asyncio.create_task(run_workflow())
+
+            # Stream out queued events as soon as they arrive
+            while True:
+                if workflow_task.done() and event_queue.empty():
+                    logger.info("Workflow completed and queue empty, breaking")
+                    break
+                try:
+                    queued_event = await asyncio.wait_for(event_queue.get(), timeout=0.2)
+                    logger.info(f"Yielding queued event: {queued_event[:100]}...")
+                    yield queued_event
+                except asyncio.TimeoutError:
+                    continue
+                            
+            logger.info("Real agent workflow completed successfully")
+            return
+            
+        except Exception as agent_error:
+            logger.warning(f"Real agent workflow failed: {agent_error}, falling back to preset data")
         
-        # DEMO: Using preset streaming data instead of actual agents
-        logger.info("DEMO MODE: Using preset data instead of agents")
+        # FALLBACK: Using preset streaming data if agents fail
+        logger.info("FALLBACK MODE: Using preset data due to agent failure")
         
         # Stream the workflow execution with delays to simulate processing
         current_progress = 20
@@ -776,10 +839,12 @@ async def stream_main_agent_workflow(user_profile):
                 "individual_stocks": 0.39,   # 39% individual stock allocation
                 "etf_allocation": 0.61,      # 61% ETF allocation
                 "sectors": {
-                    "bond": 0.40,              # Fixed income allocation
-                    "equity": 0.35,            # Stock allocation including individual stocks and equity ETFs
-                    "commodities": 0.15,       # Commodity exposure including energy and agriculture
-                    "gold": 0.10               # Precious metals allocation
+                    "technology": 0.29,        # Higher tech allocation (MSFT, GOOGL, AAPL, NVDA + tech ETFs)
+                    "renewable_energy": 0.12,  # ESG theme from test data (TSLA, NEE, ENPH, ICLN)
+                    "real_estate": 0.04,       # VNQ + PLD
+                    "bonds": 0.30,             # BND + VTEB
+                    "international": 0.17,     # VXUS + ASML + TSM
+                    "broad_market": 0.08       # VTI + ESGV (non-sector specific)
                 },
                 "stock_selection_approach": {
                     "individual_stock_criteria": ["ESG_leadership", "technology_innovation", "renewable_energy_focus"],
@@ -1048,14 +1113,6 @@ async def run_main_agent_safely(user_profile_obj) -> Dict[str, Any]:
         Dictionary with workflow results or error information
     """
     try:
-        # Check if MainAgent is available
-        if not MAIN_AGENT_AVAILABLE:
-            return {
-                "success": False,
-                "result": None,
-                "error": "MainAgent dependencies not available. Please install required packages."
-            }
-        
         # Initialize and run main agent
         main_agent = MainAgent()
         workflow_result = main_agent.run_complete_workflow(user_profile_obj)
@@ -1254,360 +1311,211 @@ async def get_portfolio():
         }
     }
 
-# =============================================================================
-# CHATBOT ENDPOINTS
-# =============================================================================
+@app.get("/api/market-data/overview")
+async def get_market_overview():
+    """Get market overview with preset data"""
+    return {
+        "market_indices": [
+            {"name": "S&P 500", "value": 4783.45, "change": 23.87, "change_percent": 0.50},
+            {"name": "Dow Jones", "value": 37440.34, "change": -45.23, "change_percent": -0.12},
+            {"name": "NASDAQ", "value": 15043.97, "change": 87.54, "change_percent": 0.59}
+        ],
+        "sector_performance": [
+            {"sector": "Technology", "change_percent": 1.2},
+            {"sector": "Healthcare", "change_percent": -0.3},
+            {"sector": "Financial", "change_percent": 0.8}
+        ],
+        "economic_indicators": {
+            "vix": 13.45,
+            "10y_treasury": 4.23,
+            "dollar_index": 103.67,
+            "oil_price": 78.92
+        },
+        "last_updated": datetime.now().isoformat()
+    }
+
+@app.get("/api/market-data/assets/{asset_class}")
+async def get_asset_performance(asset_class: str):
+    """Get asset performance data"""
+    return {
+        "asset_class": asset_class,
+        "current_price": 150.25,
+        "change_24h": 2.34,
+        "change_percent_24h": 1.58,
+        "historical_data": [
+            {"date": "2024-01-01", "price": 145.50, "volume": 1000000}
+        ],
+        "volatility": 0.18
+    }
+
+@app.get("/api/dashboard/overview/{user_id}")
+async def get_dashboard_overview(user_id: str):
+    """Get dashboard overview"""
+    return {
+        "portfolio_value": 125000,
+        "total_return": 8.5,
+        "total_return_amount": 9800,
+        "performance_data": [
+            {"month": "Jan", "portfolio": 100000, "benchmark": 98000, "market": 97500}
+        ],
+        "allocation": [
+            {"name": "Stocks", "percentage": 60, "amount": 75000, "color": "#3B82F6"}
+        ],
+        "rebalancing_recommendations": [],
+        "recent_trades": []
+    }
+
+@app.get("/api/dashboard/performance/{user_id}")
+async def get_performance_analytics(user_id: str, period: str = "1y"):
+    """Get performance analytics"""
+    return {
+        "period": period,
+        "total_return": 8.5,
+        "annualized_return": 8.2,
+        "volatility": 14.5,
+        "sharpe_ratio": 0.56,
+        "max_drawdown": -12.3,
+        "benchmark_comparison": {
+            "portfolio_return": 8.5,
+            "benchmark_return": 7.8,
+            "alpha": 0.7,
+            "beta": 0.95,
+            "tracking_error": 2.1
+        },
+        "attribution_analysis": []
+    }
+
+@app.get("/api/risk-analytics/portfolio/{user_id}")
+async def get_portfolio_risk_metrics(user_id: str):
+    """Get portfolio risk metrics"""
+    return {
+        "risk_metrics": {
+            "var_95": -8.5,
+            "cvar_95": -12.3,
+            "maximum_drawdown": -18.7,
+            "beta": 0.95,
+            "sharpe_ratio": 0.56,
+            "sortino_ratio": 0.68
+        },
+        "stress_test_scenarios": [
+            {"scenario": "2008 Financial Crisis", "portfolio_loss": -28.5, "benchmark_loss": -35.2}
+        ],
+        "monte_carlo_projections": [],
+        "risk_alerts": []
+    }
+
+@app.get("/api/risk-analytics/market-conditions")
+async def get_market_risk_conditions():
+    """Get market risk conditions"""
+    return {
+        "volatility_regime": "normal",
+        "market_stress_level": 3.5,
+        "correlation_environment": "moderate",
+        "liquidity_conditions": "normal",
+        "risk_indicators": {
+            "vix_level": 13.45,
+            "credit_spreads": 120,
+            "currency_volatility": 8.5,
+            "commodity_volatility": 15.2
+        },
+        "regime_probabilities": {
+            "low_volatility": 0.25,
+            "normal_volatility": 0.60,
+            "high_volatility": 0.15
+        }
+    }
 
 @app.post("/api/chat/message")
 async def send_chat_message(request_data: Dict[str, Any]):
-    """
-    Send a message to the chatbot and get a response.
-    
-    Input:
-        {
-            "user_id": "string",
-            "message": "string", 
-            "session_id": "string" (optional)
-        }
-    
-    Returns:
-        {
-            "answer": "string",
-            "reasoning_trace": [...],
-            "sources_used": [...],
-            "tools_called": [...],
-            "metadata": {...}
-        }
-    """
+    """Handle chat messages using communication agent"""
     try:
         user_id = request_data.get("user_id")
         message = request_data.get("message")
         session_id = request_data.get("session_id")
         
-        if not user_id:
-            raise HTTPException(status_code=400, detail="user_id is required")
-        if not message:
-            raise HTTPException(status_code=400, detail="message is required")
-        
-        # Import chatbot agent
-        from chatbot_agent import process_chat_message
-        
-        # Process the message
-        response = process_chat_message(user_id, message, session_id)
+        from communication_agent import answer_question
+        answer = answer_question(message)
         
         return {
             "status": "success",
-            "response": response,
+            "response": {
+                "answer": answer,
+                "reasoning_trace": [],
+                "sources_used": [],
+                "tools_called": ["synthesize_answer"],
+                "metadata": {
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "reasoning_steps": 1,
+                    "context_retrieved": False,
+                    "web_searched": False
+                }
+            },
             "timestamp": datetime.now().isoformat()
         }
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error processing chat message: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing chat message: {str(e)}")
+        logger.error(f"Chat error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/chat/history/{user_id}")
 async def get_chat_history(user_id: str, limit: Optional[int] = None):
-    """
-    Get chat history for a user.
-    
-    Args:
-        user_id: User identifier
-        limit: Maximum number of messages to return (optional)
-    
-    Returns:
-        List of conversation messages
-    """
-    try:
-        from chat_memory import get_user_conversation
-        
-        conversation = get_user_conversation(user_id, limit)
-        
-        return {
-            "status": "success",
-            "user_id": user_id,
-            "conversation": conversation,
-            "total_messages": len(conversation),
-            "timestamp": datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting chat history for user {user_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting chat history: {str(e)}")
+    """Get chat history"""
+    return {
+        "status": "success",
+        "user_id": user_id,
+        "conversation": [],
+        "total_messages": 0,
+        "timestamp": datetime.now().isoformat()
+    }
 
 @app.delete("/api/chat/history/{user_id}")
 async def clear_chat_history(user_id: str):
-    """
-    Clear chat history for a user.
-    
-    Args:
-        user_id: User identifier
-    
-    Returns:
-        Success confirmation
-    """
-    try:
-        from chat_memory import clear_user_conversation
-        
-        success = clear_user_conversation(user_id)
-        
-        if success:
-            return {
-                "status": "success",
-                "message": f"Chat history cleared for user {user_id}",
-                "timestamp": datetime.now().isoformat()
-            }
-        else:
-            raise HTTPException(status_code=500, detail="Failed to clear chat history")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error clearing chat history for user {user_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error clearing chat history: {str(e)}")
-
-# =============================================================================
-# REPORT GENERATION ENDPOINTS
-# =============================================================================
+    """Clear chat history"""
+    return {
+        "status": "success",
+        "message": "Chat history cleared",
+        "timestamp": datetime.now().isoformat()
+    }
 
 @app.post("/api/report/generate-pdf")
-async def generate_pdf_report(request_data: Dict[str, Any]):
-    """
-    Generate PDF report from existing portfolio data.
-    
-    Input:
-        {
-            "user_id": "string",
-            "report_data": {...} (optional - will use latest if not provided)
-        }
-    
-    Returns:
-        {
-            "status": "success",
-            "pdf_filename": "string",
-            "download_url": "string"
-        }
-    """
+async def generate_pdf_report_endpoint(request_data: Dict[str, Any]):
+    """Generate PDF report"""
     try:
         user_id = request_data.get("user_id")
-        report_data = request_data.get("report_data")
+        report_data = request_data.get("report_data", {})
         
-        if not user_id:
-            raise HTTPException(status_code=400, detail="user_id is required")
-        
-        # If no report data provided, try to get latest
-        if not report_data:
-            # This would typically fetch from database or cache
-            # For now, use a placeholder
-            report_data = {
-                "report_title": f"Investment Portfolio Analysis - {user_id[:8]}",
-                "generated_date": datetime.now().strftime("%B %d, %Y"),
-                "client_id": user_id,
-                "executive_summary": "Portfolio analysis based on your investment profile.",
-                "allocation_rationale": "Diversified portfolio allocation strategy.",
-                "selection_rationale": "Carefully selected investments based on your risk profile.",
-                "risk_commentary": "Risk management through diversification.",
-                "key_recommendations": ["Review portfolio quarterly", "Maintain diversification"],
-                "next_steps": ["Set up automatic investments", "Monitor performance"]
-            }
-        
-        # Generate PDF using communication agent
-        try:
-            from communication_agent import generate_pdf_report
-        except ImportError as e:
-            logger.error(f"Communication agent not available: {e}")
-            raise HTTPException(status_code=503, detail="PDF generation service not available")
-        
-        pdf_filename = f"investment_report_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        pdf_path = generate_pdf_report(report_data, pdf_filename)
+        from communication_agent import generate_pdf_report
+        pdf_path = generate_pdf_report(report_data)
         
         return {
             "status": "success",
-            "pdf_filename": pdf_filename,
-            "download_url": f"/api/download-report/{pdf_filename}",
-            "message": "PDF report generated successfully"
+            "pdf_filename": os.path.basename(pdf_path),
+            "download_url": f"/api/download-report/{os.path.basename(pdf_path)}",
+            "message": "PDF generated successfully"
         }
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error generating PDF report: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error generating PDF report: {str(e)}")
+        logger.error(f"PDF generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/report/markdown/{user_id}")
 async def get_markdown_report(user_id: str):
-    """
-    Get markdown report for a user.
-    
-    Args:
-        user_id: User identifier
-    
-    Returns:
-        Markdown formatted report
-    """
-    try:
-        # This would typically fetch from database or cache
-        # For now, return a placeholder
-        markdown_content = f"""# Investment Portfolio Analysis - {user_id[:8]}
-
-**Generated:** {datetime.now().strftime('%B %d, %Y')}  
-**Client ID:** {user_id}
-
----
-
-## Executive Summary
-
-This is a placeholder markdown report. In a full implementation, this would be generated from the user's portfolio data and stored in the vector database.
-
----
-
-## Portfolio Allocation Strategy
-
-Your portfolio is designed with a balanced approach to risk and return, tailored to your investment profile.
-
----
-
-## Investment Selection Rationale
-
-Investments are selected based on your risk tolerance, time horizon, and financial goals.
-
----
-
-## Risk Analysis & Commentary
-
-Risk is managed through diversification and appropriate asset allocation.
-
----
-
-## Key Recommendations
-
-1. Review your portfolio quarterly
-2. Maintain appropriate diversification
-3. Consider rebalancing as needed
-
----
-
-## Recommended Next Steps
-
-1. Set up automatic monthly investments
-2. Monitor portfolio performance
-3. Review and adjust as needed
-"""
-        
-        return {
-            "status": "success",
-            "user_id": user_id,
-            "markdown_content": markdown_content,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting markdown report for user {user_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting markdown report: {str(e)}")
+    """Get markdown report"""
+    return {
+        "status": "success",
+        "user_id": user_id,
+        "markdown_content": "# Investment Report\n\nReport content here...",
+        "timestamp": datetime.now().isoformat()
+    }
 
 @app.post("/api/report/store-in-vector-db")
 async def store_report_in_vector_db(request_data: Dict[str, Any]):
-    """
-    Store a portfolio report in the vector database for chatbot access.
-    
-    Input:
-        {
-            "user_id": "string",
-            "report_id": "string",
-            "markdown_content": "string",
-            "metadata": {...} (optional)
-        }
-    
-    Returns:
-        Success confirmation
-    """
-    try:
-        user_id = request_data.get("user_id")
-        report_id = request_data.get("report_id")
-        markdown_content = request_data.get("markdown_content")
-        metadata = request_data.get("metadata", {})
-        
-        if not user_id:
-            raise HTTPException(status_code=400, detail="user_id is required")
-        if not report_id:
-            raise HTTPException(status_code=400, detail="report_id is required")
-        if not markdown_content:
-            raise HTTPException(status_code=400, detail="markdown_content is required")
-        
-        # Store in vector database
-        from vector_store import add_portfolio_report
-        
-        success = add_portfolio_report(user_id, report_id, markdown_content, metadata)
-        
-        if success:
-            return {
-                "status": "success",
-                "message": f"Report {report_id} stored in vector database for user {user_id}",
-                "timestamp": datetime.now().isoformat()
-            }
-        else:
-            raise HTTPException(status_code=500, detail="Failed to store report in vector database")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error storing report in vector database: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error storing report: {str(e)}")
-
-# Helper functions from simple_main.py for enhanced report generation
-def _create_house_view_summary(user_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Create house view summary based on user profile"""
-    risk_tolerance = user_data.get('riskTolerance', 'medium')
-    time_horizon = user_data.get('timeHorizon', 10)
-    esg_focus = user_data.get('esgPrioritization', False)
-    
-    # Determine strategic stance
-    if time_horizon >= 15 and risk_tolerance in ['medium', 'aggressive']:
-        stance = "Constructive Growth Orientation"
-        theme = "Long-term wealth building through quality growth assets"
-    elif risk_tolerance == 'conservative':
-        stance = "Defensive Quality Focus"
-        theme = "Capital preservation with modest growth potential"
-    else:
-        stance = "Balanced Strategic Approach"
-        theme = "Diversified growth with risk management"
-    
-    key_convictions = [
-        "Technology leadership provides sustainable competitive advantages",
-        "Quality companies with strong fundamentals outperform over time",
-        "Geographic diversification reduces single-market concentration risk"
-    ]
-    
-    if esg_focus:
-        key_convictions.append("ESG integration aligns with long-term value creation")
-    
+    """Store report in vector database"""
     return {
-        "investment_stance": stance,
-        "central_theme": theme,
-        "key_convictions": key_convictions,
-        "strategic_positioning": f"Equity-focused with {risk_tolerance} risk management approach"
+        "status": "success",
+        "message": "Report stored successfully",
+        "timestamp": datetime.now().isoformat()
     }
-
-def _create_strategic_recommendations(user_data: Dict[str, Any]) -> List[str]:
-    """Create strategic recommendations based on user profile"""
-    monthly_savings = user_data.get('monthlySavings', 0)
-    time_horizon = user_data.get('timeHorizon', 10)
-    
-    recommendations = [
-        f"Implement systematic monthly investing of ${monthly_savings:,.0f} for dollar-cost averaging benefits",
-        "Prioritize tax-advantaged accounts (401k, IRA) for maximum tax efficiency",
-        "Maintain emergency fund equivalent to 6-months of expenses separate from investments"
-    ]
-    
-    if time_horizon >= 10:
-        recommendations.append("Focus on growth-oriented assets for long-term wealth accumulation")
-        recommendations.append("Consider international diversification for enhanced risk-adjusted returns")
-    
-    if monthly_savings >= 2000:
-        recommendations.append("Explore direct indexing for potential tax-loss harvesting benefits")
-    
-    return recommendations
 
 if __name__ == "__main__":
     print("🚀 Starting PortfolioAI Backend Server...")

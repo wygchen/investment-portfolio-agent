@@ -13,6 +13,7 @@ import { ValuesStep } from "../app/assessment/values-step"
 import { Button } from "./ui/button"
 import { Badge } from "./ui/badge"
 import { ArrowLeft, ArrowRight, Brain } from "lucide-react"
+import { useToast } from "@/lib/use-toast"
 
 export type UserProfile = {
   goals: Array<{ id: string; label: string; priority: number }>
@@ -47,6 +48,7 @@ const STEPS = [
 
 export function DiscoveryFlow() {
   const router = useRouter()
+  const { toast } = useToast()
   const [currentStep, setCurrentStep] = useState(1)
   const [profile, setProfile] = useState<UserProfile>({
     goals: [],
@@ -82,7 +84,7 @@ export function DiscoveryFlow() {
       
       try {
         // Send profile to discovery agent backend
-        const response = await fetch('http://localhost:8000/api/process-assessment', { 
+        const response = await fetch('http://localhost:8000/api/assessment', { 
           method: 'POST', 
           headers: {
             'Content-Type': 'application/json',
@@ -95,10 +97,14 @@ export function DiscoveryFlow() {
           console.log('Discovery Agent Response:', result)
           
           // Store the profile ID for future reference
-          localStorage.setItem('profileId', result.profile_id)
+          localStorage.setItem('profileId', result.user_id)
           localStorage.setItem('investmentProfile', JSON.stringify(profile))
           
-          alert(`Profile processed successfully! Profile ID: ${result.profile_id}`)
+          toast({
+            title: "Profile Processed Successfully!",
+            description: `Profile ID: ${result.user_id}`,
+            variant: "success",
+          })
         } else {
           console.error('Failed to process profile:', response.statusText)
           // Fallback to localStorage
@@ -111,7 +117,11 @@ export function DiscoveryFlow() {
         console.error('Error saving profile:', error)
         // Fallback to localStorage even if backend fails
         localStorage.setItem('investmentProfile', JSON.stringify(profile))
-        alert('Profile saved locally. Backend may not be running.')
+        toast({
+          title: "Profile Saved Locally",
+          description: "Backend may not be running. Your profile has been saved locally.",
+          variant: "default",
+        })
         router.push('/dashboard')
       }
     }

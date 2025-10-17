@@ -14,7 +14,7 @@ import json
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_community.chat_message_histories import InMemoryChatMessageHistory
 from langchain.memory import ConversationBufferMemory, ConversationSummaryMemory
 
 # Configure logging

@@ -15,7 +15,7 @@ from enum import Enum
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ibm import ChatWatsonx
 
-from ..watsonx_utils import create_watsonx_llm, load_environment
+from watsonx_utils import create_watsonx_llm, load_environment
 
 
 logger = logging.getLogger(__name__)

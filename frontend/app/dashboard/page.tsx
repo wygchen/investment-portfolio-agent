@@ -71,10 +71,10 @@ export default function DashboardPage() {
     const savedProfile = localStorage.getItem('investmentProfile')
     if (savedProfile) {
       setUserProfile(JSON.parse(savedProfile))
-      // Extract user ID from profile
-      const profile = JSON.parse(savedProfile)
-      if (profile.profile_id) {
-        setUserId(profile.profile_id)
+      // Extract user ID from stored profile ID
+      const storedProfileId = localStorage.getItem('profileId')
+      if (storedProfileId) {
+        setUserId(storedProfileId)
       }
     }
   }, [])

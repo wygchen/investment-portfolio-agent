@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
+import { useToast } from "@/lib/use-toast"
 import { 
   FileText, 
   MessageSquare, 
@@ -49,6 +50,7 @@ interface QAItem {
 }
 
 export function InvestmentReportComponent() {
+  const { toast } = useToast()
   const [report, setReport] = useState<InvestmentReport | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -118,7 +120,11 @@ export function InvestmentReportComponent() {
         
         // Show success message
         const reportType = usePersonalizedEndpoint ? 'personalized investment' : 'investment'
-        alert(`${reportType} report generated successfully!`)
+        toast({
+          title: "Report Generated Successfully!",
+          description: `${reportType} report generated successfully!`,
+          variant: "success",
+        })
       } else {
         const errorResult = await response.json()
         setError(errorResult.detail || 'Failed to generate report')
@@ -158,10 +164,18 @@ export function InvestmentReportComponent() {
         setCurrentQuestion("")
       } else {
         const errorResult = await response.json()
-        alert(`Error: ${errorResult.detail}`)
+        toast({
+          title: "Error",
+          description: errorResult.detail,
+          variant: "destructive",
+        })
       }
     } catch (error) {
-      alert('Network error: Unable to ask question')
+      toast({
+        title: "Network Error",
+        description: "Unable to ask question. Please check your connection.",
+        variant: "destructive",
+      })
       console.error('Error asking question:', error)
     } finally {
       setAskingQuestion(false)
@@ -177,7 +191,11 @@ export function InvestmentReportComponent() {
 
   const downloadPDF = async () => {
     if (!report?.pdf_filename) {
-      alert('PDF file not available')
+      toast({
+        title: "PDF Not Available",
+        description: "PDF file is not available for download.",
+        variant: "destructive",
+      })
       return
     }
     
@@ -196,11 +214,19 @@ export function InvestmentReportComponent() {
         window.URL.revokeObjectURL(url)
         document.body.removeChild(a)
       } else {
-        alert('Error downloading PDF report')
+        toast({
+          title: "Download Error",
+          description: "Error downloading PDF report. Please try again.",
+          variant: "destructive",
+        })
       }
     } catch (error) {
       console.error('Error downloading PDF:', error)
-      alert('Error downloading PDF report')
+      toast({
+        title: "Download Error",
+        description: "Error downloading PDF report. Please try again.",
+        variant: "destructive",
+      })
     }
   }
 

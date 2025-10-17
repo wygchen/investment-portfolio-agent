@@ -17,6 +17,7 @@ import json
 from dataclasses import dataclass
 
 from .config import Config
+from .qualitative_agent import QualitativeAnalysisAgent
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -40,111 +41,15 @@ class EquityScreener:
     
     def __init__(self, config: Config):
         self.config = config
-        self.qualitative_integrator = QualitativeIntegrator(config)
+        self.qualitative_agent = QualitativeAnalysisAgent(config)
         self.screening_history: List[ScreeningResults] = []
         
-    def apply_region_filter(self, data: pd.DataFrame, 
-                          allowed_regions: List[str]) -> Tuple[pd.DataFrame, ScreeningResults]:
-        """
-        Apply region-based screening filter.
-        
-        Args:
-            data: DataFrame with stock data including 'region' column
-            allowed_regions: List of allowed regions ('US', 'HK', etc.)
-            
-        Returns:
-            Tuple of (filtered_data, screening_results)
-        """
-        input_count = len(data)
-        
-        if not allowed_regions or 'ALL' in allowed_regions:
-            # No region filter applied
-            return data, ScreeningResults(
-                layer_name="Region Filter",
-                input_count=input_count,
-                output_count=input_count,
-                exclusion_count=0,
-                exclusion_reasons=[],
-                surviving_tickers=data['ticker'].tolist() if 'ticker' in data.columns else []
-            )
-        
-        # Apply region filter
-        filtered_data = data[data['region'].isin(allowed_regions)].copy()
-        excluded_data = data[~data['region'].isin(allowed_regions)]
-        
-        # Track exclusions
-        exclusion_reasons = []
-        for region in excluded_data['region'].unique():
-            count = len(excluded_data[excluded_data['region'] == region])
-            exclusion_reasons.append(f"{count} stocks excluded: Region '{region}' not in allowed list")
-        
-        results = ScreeningResults(
-            layer_name="Region Filter",
-            input_count=input_count,
-            output_count=len(filtered_data),
-            exclusion_count=len(excluded_data),
-            exclusion_reasons=exclusion_reasons[:self.config.output.log_sample_exclusions],
-            surviving_tickers=filtered_data['ticker'].tolist() if 'ticker' in filtered_data.columns else []
-        )
-        
-        self.screening_history.append(results)
-        logger.info(f"Region filter: {input_count} → {len(filtered_data)} stocks")
-        
-        return filtered_data, results
-    
-    def apply_sector_filter(self, data: pd.DataFrame, 
-                          allowed_sectors: List[str]) -> Tuple[pd.DataFrame, ScreeningResults]:
-        """
-        Apply sector-based screening filter.
-        
-        Args:
-            data: DataFrame with stock data including 'sector' column
-            allowed_sectors: List of allowed sectors
-            
-        Returns:
-            Tuple of (filtered_data, screening_results)
-        """
-        input_count = len(data)
-        
-        if not allowed_sectors or 'ALL' in allowed_sectors:
-            # No sector filter applied
-            return data, ScreeningResults(
-                layer_name="Sector Filter",
-                input_count=input_count,
-                output_count=input_count,
-                exclusion_count=0,
-                exclusion_reasons=[],
-                surviving_tickers=data['ticker'].tolist() if 'ticker' in data.columns else []
-            )
-        
-        # Apply sector filter
-        filtered_data = data[data['sector'].isin(allowed_sectors)].copy()
-        excluded_data = data[~data['sector'].isin(allowed_sectors)]
-        
-        # Track exclusions
-        exclusion_reasons = []
-        for sector in excluded_data['sector'].unique():
-            count = len(excluded_data[excluded_data['sector'] == sector])
-            exclusion_reasons.append(f"{count} stocks excluded: Sector '{sector}' not in allowed list")
-        
-        results = ScreeningResults(
-            layer_name="Sector Filter",
-            input_count=input_count,
-            output_count=len(filtered_data),
-            exclusion_count=len(excluded_data),
-            exclusion_reasons=exclusion_reasons[:self.config.output.log_sample_exclusions],
-            surviving_tickers=filtered_data['ticker'].tolist() if 'ticker' in filtered_data.columns else []
-        )
-        
-        self.screening_history.append(results)
-        logger.info(f"Sector filter: {input_count} → {len(filtered_data)} stocks")
-        
-        return filtered_data, results
+    # Region and sector filters are intentionally removed; filtering now happens earlier in the workflow
     
     def apply_quality_screen(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, ScreeningResults]:
         """
         Apply Layer 1: Quality and Efficiency Screen.
-        Filters for minimum ROE and positive equity.
+        Filters for minimum ROE (simplified - no balance sheet data required).
         
         Args:
             data: DataFrame with fundamental metrics
@@ -158,18 +63,28 @@ class EquityScreener:
         # Start with all data
         filtered_data = data.copy()
         
-        # Filter 1: Positive shareholders equity
-        if 'has_positive_equity' in filtered_data.columns:
-            negative_equity = filtered_data[~filtered_data['has_positive_equity']]
-            filtered_data = filtered_data[filtered_data['has_positive_equity']]
-            
-            if len(negative_equity) > 0:
-                exclusion_reasons.append(
-                    f"{len(negative_equity)} stocks excluded: Negative or zero shareholders equity"
-                )
-        
-        # Filter 2: Minimum ROE threshold
+        # Filter: Minimum ROE threshold (only filter we can reliably apply)
         if 'roe' in filtered_data.columns:
+            # Debug: Log ROE statistics
+            roe_stats = filtered_data['roe'].describe()
+            mean_val = roe_stats.get('mean', 'N/A')
+            median_val = roe_stats.get('50%', 'N/A')
+            min_val = roe_stats.get('min', 'N/A')
+            max_val = roe_stats.get('max', 'N/A')
+            
+            # Format statistics safely
+            mean_str = f"{mean_val:.3f}" if isinstance(mean_val, (int, float)) else str(mean_val)
+            median_str = f"{median_val:.3f}" if isinstance(median_val, (int, float)) else str(median_val)
+            min_str = f"{min_val:.3f}" if isinstance(min_val, (int, float)) else str(min_val)
+            max_str = f"{max_val:.3f}" if isinstance(max_val, (int, float)) else str(max_val)
+            
+            logger.info(f"ROE statistics: mean={mean_str}, median={median_str}, min={min_str}, max={max_str}")
+            logger.info(f"ROE threshold: {self.config.screening.min_roe}")
+            
+            # Count stocks with valid ROE data
+            valid_roe_count = filtered_data['roe'].notna().sum()
+            logger.info(f"Stocks with valid ROE data: {valid_roe_count}/{len(filtered_data)}")
+            
             low_roe = filtered_data[
                 (filtered_data['roe'].notna()) & 
                 (filtered_data['roe'] < self.config.screening.min_roe)
@@ -181,12 +96,16 @@ class EquityScreener:
                 (filtered_data['roe'] >= self.config.screening.min_roe)
             ]
             
+            logger.info(f"Stocks excluded due to low ROE: {len(low_roe)}")
+            
             if len(low_roe) > 0:
                 sample_exclusions = low_roe.head(3)
                 for _, row in sample_exclusions.iterrows():
                     exclusion_reasons.append(
                         f"Ticker {row.get('ticker', 'Unknown')}: ROE {row['roe']:.3f} < {self.config.screening.min_roe}"
                     )
+        else:
+            logger.info("No ROE data available - skipping quality screen filtering")
         
         results = ScreeningResults(
             layer_name="Quality Screen",
@@ -198,7 +117,7 @@ class EquityScreener:
         )
         
         self.screening_history.append(results)
-        logger.info(f"Quality screen: {input_count} → {len(filtered_data)} stocks")
+        logger.info(f"Quality screen: {input_count} -> {len(filtered_data)} stocks")
         
         return filtered_data, results
     
@@ -288,7 +207,7 @@ class EquityScreener:
         )
         
         self.screening_history.append(results)
-        logger.info(f"Risk screen: {input_count} → {len(filtered_data)} stocks")
+        logger.info(f"Risk screen: {input_count} -> {len(filtered_data)} stocks")
         
         return filtered_data, results
     
@@ -359,7 +278,7 @@ class EquityScreener:
         )
         
         self.screening_history.append(results)
-        logger.info(f"Valuation screen: {input_count} → {len(filtered_data)} stocks")
+        logger.info(f"Valuation screen: {input_count} -> {len(filtered_data)} stocks")
         
         return filtered_data, results
     
@@ -425,14 +344,12 @@ class EquityScreener:
         )
         
         self.screening_history.append(results)
-        logger.info(f"Technical screen: {input_count} → {len(filtered_data)} stocks")
+        logger.info(f"Technical screen: {input_count} -> {len(filtered_data)} stocks")
         
         return filtered_data, results
     
     def apply_full_screening_pipeline(self, 
-                                    data: pd.DataFrame,
-                                    allowed_regions: Optional[List[str]] = None,
-                                    allowed_sectors: Optional[List[str]] = None) -> pd.DataFrame:
+                                    data: pd.DataFrame) -> pd.DataFrame:
         """
         Apply the complete screening pipeline in sequence.
         
@@ -451,27 +368,19 @@ class EquityScreener:
         
         current_data = data.copy()
         
-        # Step 1: Region filter
-        if allowed_regions:
-            current_data, _ = self.apply_region_filter(current_data, allowed_regions)
-        
-        # Step 2: Sector filter
-        if allowed_sectors:
-            current_data, _ = self.apply_sector_filter(current_data, allowed_sectors)
-        
-        # Step 3: Quality screen
+        # Step 1: Quality screen
         current_data, _ = self.apply_quality_screen(current_data)
         
-        # Step 4: Risk screen
+        # Step 2: Risk screen
         current_data, _ = self.apply_risk_screen(current_data)
         
-        # Step 5: Valuation screen
+        # Step 3: Valuation screen
         current_data, _ = self.apply_valuation_screen(current_data)
         
-        # Step 6: Technical screen
+        # Step 4: Technical screen
         current_data, _ = self.apply_technical_screen(current_data)
         
-        logger.info(f"Completed screening pipeline: {len(data)} → {len(current_data)} stocks")
+        logger.info(f"Completed screening pipeline: {len(data)} -> {len(current_data)} stocks")
         
         return current_data
     
@@ -508,7 +417,7 @@ class EquityScreener:
     
     def enable_qualitative_analysis(self, enable: bool = True):
         """Enable qualitative analysis integration"""
-        self.qualitative_integrator.enable_qualitative_analysis(enable)
+        self.qualitative_agent.enable_qualitative_analysis(enable)
     
     def add_qualitative_scores(self, data: pd.DataFrame, 
                              fundamental_data: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
@@ -522,7 +431,12 @@ class EquityScreener:
         Returns:
             DataFrame with qualitative scores added
         """
-        if not self.qualitative_integrator.enabled or data.empty:
+        logger.info(f"Starting qualitative analysis for {len(data)} stocks")
+        logger.info(f"Qualitative agent enabled: {self.qualitative_agent.enabled}")
+        logger.info(f"LLM available: {self.qualitative_agent.llm is not None}")
+        
+        if not self.qualitative_agent.enabled or data.empty:
+            logger.info("Qualitative analysis disabled or no data - using placeholder scores")
             # Add placeholder qualitative score
             data = data.copy()
             data['qual_score'] = self.config.weights.w_qualitative * 0  # Zero weight if disabled
@@ -534,14 +448,18 @@ class EquityScreener:
             ticker = row['ticker']
             if ticker in fundamental_data:
                 companies_for_analysis[ticker] = {
-                    'business_summary': fundamental_data[ticker].get('business_summary', ''),
+                    'news': fundamental_data[ticker].get('business_summary', ''),  # Changed from 'business_summary' to 'news'
                     'roe': row.get('roe'),
                     'debt_to_equity': row.get('debt_to_equity'),
                     'pe_ratio': row.get('pe_ratio')
                 }
         
+        logger.info(f"Prepared {len(companies_for_analysis)} companies for qualitative analysis")
+        
         # Get qualitative scores
-        qual_scores = self.qualitative_integrator.batch_analyze(companies_for_analysis)
+        logger.info("Starting batch qualitative analysis...")
+        qual_scores = self.qualitative_agent.batch_analyze(companies_for_analysis)
+        logger.info(f"Completed qualitative analysis for {len(qual_scores)} companies")
         
         # Add scores to DataFrame
         data = data.copy()
