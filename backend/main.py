@@ -18,7 +18,7 @@ from datetime import datetime
 from profile_processor_agent import generate_user_profile
 # Import main agent for workflow execution
 from main_agent import MainAgent
-from market_news_agent.market_sentiment import get_yahoo_news_description
+from market_news_agent.news_insights import get_news_insights_analysis
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -132,6 +132,63 @@ async def validate_assessment(assessment_data: FrontendAssessmentData):
     except Exception as e:
         logger.error(f"Error validating assessment: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error validating assessment: {str(e)}")
+
+@app.post("/api/process-assessment")
+async def process_assessment(assessment_data: FrontendAssessmentData):
+    """
+    Process assessment data and generate investment report
+    
+    This endpoint processes the assessment data, generates user profile,
+    and returns a complete investment report with portfolio recommendations.
+    """
+    try:
+        logger.info("🚀 Processing assessment data...")
+        
+        # Convert frontend data to backend format
+        frontend_data = assessment_data.model_dump()
+        
+        # Generate user profile
+        logger.info("📊 Generating user profile...")
+        profile_result = generate_user_profile(frontend_data)
+        
+        if not profile_result.get("success"):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Profile generation failed: {profile_result.get('error', 'Unknown error')}"
+            )
+        
+        user_profile = profile_result["profile"]
+        logger.info("✅ User profile generated successfully")
+        
+        # Run main agent workflow
+        logger.info("🤖 Running AI agent workflow...")
+        main_agent = MainAgent()
+        agent_result = await main_agent.execute_workflow(user_profile)
+        
+        if not agent_result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Agent workflow failed: {agent_result.get('error', 'Unknown error')}"
+            )
+        
+        workflow_result = agent_result["result"]
+        final_report = workflow_result["results"].get("final_report", {})
+        
+        logger.info("✅ Assessment processing complete")
+        
+        return {
+            "status": "success",
+            "report": final_report,
+            "profile": user_profile,
+            "execution_time": workflow_result.get("execution_time", 0),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing assessment: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing assessment: {str(e)}")
 
 @app.post("/api/get-news")
 async def get_news(ticker: str):
@@ -1190,14 +1247,50 @@ async def get_portfolio():
         }
     }
 
+@app.post("/api/news-insights")
+async def get_news_insights_endpoint(request_data: Dict[str, Any]):
+    """
+    Get AI news insights for a stock symbol
+    Returns price data, news articles, and market summary
+    """
+    symbol = request_data.get("symbol")
+    
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Symbol is required")
+    
+    try:
+        logger.info(f"🔄 Getting news insights for {symbol}")
+        
+        # Get complete analysis
+        analysis_data = get_news_insights_analysis(symbol)
+        
+        logger.info(f"✅ News insights complete for {symbol}")
+        
+        return {
+            "status": "success",
+            "data": analysis_data,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting news insights for {symbol}: {str(e)}")
+        return {
+            "status": "error",
+            "symbol": symbol,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+            "timestamp": datetime.now().isoformat()
+        }
+
 if __name__ == "__main__":
     print("🚀 Starting PortfolioAI Backend Server...")
-    print("📍 Server will be available at: http://localhost:8003")
+    print("📍 Server will be available at: http://localhost:8000")
     print("🔗 Frontend should connect from: http://localhost:3000")
     
     uvicorn.run(
         app, 
         host="127.0.0.1",
-        port=8003,
+        port=8000,
         log_level="info"
     )

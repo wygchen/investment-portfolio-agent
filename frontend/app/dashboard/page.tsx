@@ -29,6 +29,7 @@ import {
 } from "lucide-react"
 import { MarketDataWidget } from "@/components/market-data-widget"
 import { InvestmentReportComponent } from "@/components/ui/investment report"
+import { AINewsInsightsComponent } from "@/components/ui/ai-news-insights"
 import {
   LineChart,
   AreaChart,
@@ -84,7 +85,7 @@ export default function DashboardPage() {
                 </div>
                 <span className="text-xl font-semibold text-foreground">PortfolioAI</span>
               </div>
-              <Badge variant="secondary" className="px-3 py-1">
+              <Badge className="px-3 py-1 bg-gray-100 text-gray-700">
                 AI Dashboard
               </Badge>
             </div>
@@ -127,15 +128,15 @@ export default function DashboardPage() {
                   <div>
                     <div className="flex items-center gap-2 mb-1">
                       <h3 className="text-lg font-semibold text-foreground">🆕 AI Communication Agent Now Available!</h3>
-                      <Badge variant="destructive" className="animate-bounce">NEW</Badge>
+                      <Badge className="animate-bounce bg-red-500 text-white">NEW</Badge>
                     </div>
                     <p className="text-muted-foreground">
                       Generate professional investment reports and get AI-powered explanations about your portfolio decisions
                     </p>
                   </div>
                 </div>
-                <Button 
-                  onClick={() => setSelectedTab("communication")} 
+                <Button
+                  onClick={() => setSelectedTab("communication")}
                   className="bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 text-white shadow-lg"
                 >
                   <Brain className="w-4 h-4 mr-2" />
@@ -241,7 +242,7 @@ export default function DashboardPage() {
               <span className="flex items-center gap-2">
                 <Brain className="w-4 h-4" />
                 AI Reports
-                <Badge variant="destructive" className="text-xs px-1 py-0 h-4">NEW</Badge>
+                <Badge className="text-xs px-1 py-0 h-4 bg-red-500 text-white">NEW</Badge>
               </span>
             </TabsTrigger>
             <TabsTrigger value="ai-insights">AI Insights</TabsTrigger>
@@ -282,7 +283,7 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
             )}
-            
+
             <div className="grid lg:grid-cols-3 gap-6">
               {/* Portfolio Performance Chart */}
               <Card className="lg:col-span-2 border-0 shadow-lg">
@@ -371,7 +372,7 @@ export default function DashboardPage() {
                         ]}
                         cx="50%"
                         cy="50%"
-                        innerRadius={60}
+                        innerRadius={60} s
                         outerRadius={100}
                         paddingAngle={2}
                         dataKey="value"
@@ -603,13 +604,13 @@ export default function DashboardPage() {
                 </p>
               </div>
               <div className="flex items-center justify-center gap-2">
-                <Badge variant="default" className="bg-gradient-to-r from-primary to-accent text-white">
+                <Badge className="bg-gradient-to-r from-primary to-accent text-white">
                   🤖 Powered by AI
                 </Badge>
-                <Badge variant="outline" className="border-primary text-primary">
+                <Badge className="border border-primary text-primary bg-transparent">
                   Professional Reports
                 </Badge>
-                <Badge variant="outline" className="border-accent text-accent">
+                <Badge className="border border-accent text-accent bg-transparent">
                   Q&A Available
                 </Badge>
               </div>
@@ -622,89 +623,7 @@ export default function DashboardPage() {
           </TabsContent>
 
           <TabsContent value="ai-insights" className="space-y-6">
-            <div className="grid lg:grid-cols-2 gap-6">
-              <Card className="border-0 shadow-lg">
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <Brain className="w-5 h-5 text-primary" />
-                    <span>AI Recommendations</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {[
-                      {
-                        type: "rebalance",
-                        title: "Portfolio Rebalancing",
-                        description: "Consider reducing US equity exposure by 2% and increasing international bonds.",
-                        confidence: 87,
-                        impact: "Medium",
-                      },
-                      {
-                        type: "opportunity",
-                        title: "Emerging Markets Opportunity",
-                        description:
-                          "AI models detect undervaluation in emerging market ETFs based on economic indicators.",
-                        confidence: 73,
-                        impact: "High",
-                      },
-                      {
-                        type: "risk",
-                        title: "Volatility Alert",
-                        description: "Increased correlation detected between tech stocks and crypto holdings.",
-                        confidence: 91,
-                        impact: "Medium",
-                      },
-                    ].map((insight, index) => (
-                      <div key={index} className="p-4 rounded-lg bg-muted/30 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h4 className="font-medium">{insight.title}</h4>
-                          <Badge variant={insight.impact === "High" ? "destructive" : "secondary"}>
-                            {insight.impact} Impact
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-muted-foreground">{insight.description}</p>
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-muted-foreground">AI Confidence</span>
-                          <div className="flex items-center space-x-2">
-                            <Progress value={insight.confidence} className="w-20" />
-                            <span className="text-xs font-medium">{insight.confidence}%</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="border-0 shadow-lg">
-                <CardHeader>
-                  <CardTitle>Market Sentiment Analysis</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {[
-                      { sector: "Technology", sentiment: 78, trend: "Bullish" },
-                      { sector: "Healthcare", sentiment: 65, trend: "Neutral" },
-                      { sector: "Energy", sentiment: 45, trend: "Bearish" },
-                      { sector: "Financial", sentiment: 72, trend: "Bullish" },
-                      { sector: "Consumer", sentiment: 58, trend: "Neutral" },
-                    ].map((item) => (
-                      <div key={item.sector} className="flex items-center justify-between">
-                        <div>
-                          <div className="font-medium">{item.sector}</div>
-                          <div className="text-sm text-muted-foreground">{item.trend}</div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <Progress value={item.sentiment} className="w-20" />
-                          <span className="text-sm font-medium">{item.sentiment}%</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+            <AINewsInsightsComponent />
           </TabsContent>
         </Tabs>
       </div>
