@@ -267,6 +267,14 @@ class MainAgent:
         try:
             state["current_node"] = "risk_analysis"
             
+            # Emit progress callback if available
+            progress_callback = state.get("progress_callback")
+            if progress_callback:
+                await progress_callback("risk_analysis_started", {
+                    "progress": 30,
+                    "message": "Analyzing risk profile and generating risk blueprint..."
+                })
+            
             # Check prerequisites
             if not state.get("user_profile"):
                 raise ValueError("User profile not available from discovery node")
@@ -315,6 +323,17 @@ class MainAgent:
             if risk_blueprint and risk_blueprint.get('risk_capacity'):
                 logger.info(f"Risk capacity: {risk_blueprint.get('risk_capacity', {}).get('level', 'N/A')}")
             
+            # Emit completion callback if available
+            if progress_callback:
+                await progress_callback("risk_analysis_complete", {
+                    "progress": 50,
+                    "message": "Risk analysis completed successfully",
+                    "risk_blueprint": risk_blueprint,
+                    "financial_ratios": risk_data.get("financial_ratios", {}),
+                    "risk_score": risk_data.get("risk_score", 50),
+                    "volatility_target": risk_data.get("volatility_target", 12.0)
+                })
+            
             return state
             
         except Exception as e:
@@ -324,7 +343,7 @@ class MainAgent:
             state["node_errors"]["risk_analysis"] = str(e)
             return state
 
-    def portfolio_construction_node(self, state: MainAgentState) -> MainAgentState:
+    async def portfolio_construction_node(self, state: MainAgentState) -> MainAgentState:
         """
         Node 4: Portfolio Construction - Optimize portfolio allocation for selected tickers
         
@@ -340,6 +359,14 @@ class MainAgent:
         
         try:
             state["current_node"] = "portfolio_construction"
+            
+            # Emit progress callback if available
+            progress_callback = state.get("progress_callback")
+            if progress_callback:
+                await progress_callback("portfolio_construction_started", {
+                    "progress": 80,
+                    "message": "Optimizing portfolio allocation based on risk profile..."
+                })
             
             # Check prerequisites
             risk_blueprint = state.get("risk_blueprint")
@@ -460,6 +487,14 @@ class MainAgent:
                 logger.info(f"Volatility: {portfolio_volatility:.2%}")
                 logger.info(f"Sharpe ratio: {portfolio_sharpe:.2f}")
                 
+                # Emit completion callback if available
+                if progress_callback:
+                    await progress_callback("portfolio_construction_complete", {
+                        "progress": 90,
+                        "message": "Portfolio optimization completed successfully",
+                        "portfolio_allocation": portfolio_allocation
+                    })
+                
                 return state
                 
             except ImportError as e:
@@ -514,7 +549,7 @@ class MainAgent:
             logger.info("✅ Portfolio construction completed with fallback due to error")
             return state
 
-    def selection_node(self, state: MainAgentState) -> MainAgentState:
+    async def selection_node(self, state: MainAgentState) -> MainAgentState:
         """
         Node 3: Selection Agent - Process selected_tickers from user profile
         
@@ -530,6 +565,14 @@ class MainAgent:
         
         try:
             state["current_node"] = "selection"
+            
+            # Emit progress callback if available
+            progress_callback = state.get("progress_callback")
+            if progress_callback:
+                await progress_callback("selection_started", {
+                    "progress": 60,
+                    "message": "Selecting specific securities and analyzing market conditions..."
+                })
             
             # Check prerequisites
             risk_blueprint = state.get("risk_blueprint")
@@ -580,6 +623,14 @@ class MainAgent:
             )
             logger.info(f"Total securities selected: {total_selections}")
             
+            # Emit completion callback if available
+            if progress_callback:
+                await progress_callback("selection_complete", {
+                    "progress": 75,
+                    "message": "Security selection completed successfully",
+                    "security_selections": selection_result.get("final_selections", {})
+                })
+            
             return state
             
         except Exception as e:
@@ -589,7 +640,7 @@ class MainAgent:
             state["node_errors"]["selection"] = str(e)
             return state
 
-    def communication_node(self, state: MainAgentState) -> MainAgentState:
+    async def communication_node(self, state: MainAgentState) -> MainAgentState:
         """
         Node 5: Communication Agent - Generate final investment report
         
@@ -605,6 +656,14 @@ class MainAgent:
         
         try:
             state["current_node"] = "communication"
+            
+            # Emit progress callback if available
+            progress_callback = state.get("progress_callback")
+            if progress_callback:
+                await progress_callback("communication_started", {
+                    "progress": 95,
+                    "message": "Generating comprehensive investment report..."
+                })
             
             # Check prerequisites
             required_data = ["user_profile", "risk_blueprint", "portfolio_allocation", "security_selections"]
@@ -645,6 +704,16 @@ class MainAgent:
             logger.info("✅ Communication completed successfully")
             logger.info(f"Report generated: {report_result.get('report', {}).get('report_title', 'Unknown')}")
             logger.info(f"Total workflow execution time: {state['execution_time']:.2f} seconds")
+            
+            # Emit completion callback if available
+            if progress_callback:
+                await progress_callback("final_report_complete", {
+                    "progress": 100,
+                    "message": "Investment report generated successfully!",
+                    "final_report": report_result.get("report", {}),
+                    "execution_time": state["execution_time"],
+                    "status": "complete"
+                })
             
             return state
             
@@ -703,12 +772,13 @@ class MainAgent:
         except Exception as e:
             logger.warning(f"Failed to save data for communication agent: {e}")
 
-    def run_complete_workflow(self, user_profile: UserProfile) -> Dict[str, Any]:
+    def run_complete_workflow(self, user_profile: UserProfile, progress_callback=None) -> Dict[str, Any]:
         """
         Run the complete investment portfolio workflow
         
         Args:
             user_profile: UserProfile object with user's assessment data
+            progress_callback: Optional callback function for progress updates
             
         Returns:
             Dictionary with complete workflow results
@@ -750,6 +820,10 @@ class MainAgent:
             
             if self.workflow is None:
                 raise ValueError("Workflow not initialized")
+            
+            # Add progress callback to state for nodes to use
+            if progress_callback:
+                initial_state["progress_callback"] = progress_callback
                 
             # Use async execution since some nodes are async (e.g., risk_analysis_node)
             final_state = asyncio.run(self.workflow.ainvoke(initial_state))

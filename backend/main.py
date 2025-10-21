@@ -19,6 +19,7 @@ from profile_processor_agent import generate_user_profile
 # Import main agent for workflow execution
 from main_agent import MainAgent
 from market_news_agent.news_insights import get_news_insights_analysis
+from market_news_agent.market_sentiment import get_yahoo_news_description
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -324,7 +325,7 @@ async def generate_report_from_profile_id(request_data: Dict[str, Any]):
             )
         
         # Convert dict to UserProfile object for main agent
-        from profile_processor import UserProfile
+        from profile_processor_agent import UserProfile
         user_profile_obj = UserProfile(
             goals=profile_data.get("goals", []),
             time_horizon=profile_data.get("time_horizon", 10),
@@ -598,7 +599,7 @@ def create_user_profile_object(user_profile: dict):
     """
     Convert profile dict to UserProfile object for main agent
     """
-    from profile_processor import UserProfile
+    from profile_processor_agent import UserProfile
     
     return UserProfile(
         goals=user_profile.get("goals", []),
@@ -619,7 +620,7 @@ def create_user_profile_object(user_profile: dict):
 async def stream_main_agent_workflow(user_profile):
     """
     Stream the complete MainAgent workflow with real-time updates
-    DEMO VERSION - Using preset data instead of actual agents
+    REAL AGENT VERSION - Using actual agent execution with streaming callbacks
     """
     try:
         # Convert to UserProfile object
@@ -639,396 +640,78 @@ async def stream_main_agent_workflow(user_profile):
         logger.info(f"ESG prioritization: {user_profile.get('esg_prioritization', False)}")
         logger.info("=====================================")
         
-        # COMMENTED OUT: Original agent workflow
         # Initialize MainAgent with streaming
-        # main_agent = MainAgent()
-        # workflow = main_agent.create_workflow()
+        logger.info("REAL AGENT MODE: Using actual agent execution")
+        main_agent = MainAgent()
         
-        # DEMO: Using preset streaming data instead of actual agents
-        logger.info("DEMO MODE: Using preset data instead of agents")
+        # Create a queue to collect streaming events
+        import asyncio
+        event_queue = asyncio.Queue()
         
-        # Stream the workflow execution with delays to simulate processing
-        current_progress = 20
+        # Define progress callback that adds events to queue
+        async def progress_callback(event_type, data):
+            await event_queue.put((event_type, data))
         
-        # Risk Analysis Phase
-        current_progress = 30
-        yield create_sse_event("risk_analysis_started", {
-            "progress": current_progress,
-            "message": "Analyzing risk profile and generating risk blueprint..."
-        })
+        # Start the workflow in a separate task
+        async def run_workflow():
+            try:
+                result = main_agent.run_complete_workflow(user_profile_obj, progress_callback)
+                await event_queue.put(("workflow_complete", {"result": result}))
+            except Exception as e:
+                await event_queue.put(("workflow_error", {"error": str(e)}))
         
-        # Simulate processing time
-        await asyncio.sleep(1.5)
+        # Start workflow task
+        workflow_task = asyncio.create_task(run_workflow())
         
-        # Preset Risk Analysis Results - Based on test_assessment_data
-        # Annual Income: $75,000, Monthly Savings: $2,000, Total Debt: $25,000
-        # Time Horizon: 15 years, Risk Tolerance: medium, ESG: True
-        preset_risk_blueprint = {
-            "risk_capacity": {
-                "level": "moderate",
-                "score": 6.5,  # Conservative score: good savings but medium debt load
-                "factors": {
-                    "time_horizon": 15,  # From test_assessment_data
-                    "income_stability": "stable",
-                    "debt_ratio": 0.33,  # $25,000 debt / $75,000 income = 0.33
-                    "liquidity_position": "adequate",  # 6-12 months emergency fund
-                    "savings_capacity": 0.32  # $2,000 monthly / ($75,000/12) = 32% savings rate
-                }
-            },
-            "risk_tolerance": {
-                "level": "medium",  # Directly from test_assessment_data
-                "score": 5.0,  # Realistic medium risk = 5/10 scale (not aggressive)
-                "behavioral_factors": ["balanced_growth", "esg_conscious", "long_term_oriented"]
-            },
-            "volatility_target": 14.5,  # Realistic for medium risk tolerance  
-            "risk_score": 50,  # True medium risk = 50/100 (not 60)
-            "recommended_allocation": {
-                "equity": 0.70,  # Age-appropriate for 15-year horizon but conservative for medium risk
-                "fixed_income": 0.26,
-                "alternatives": 0.04
-            },
-            "esg_considerations": {
-                "esg_prioritization": True,  # From test_assessment_data
-                "avoid_industries": ["tobacco", "weapons"],  # From test data
-                "prefer_industries": ["technology", "renewable_energy"]  # From test data
-            }
-        }
-        
-        preset_financial_ratios = {
-            "debt_to_income": 0.33,  # $25,000 / $75,000 - calculated from test data
-            "savings_rate": 0.32,    # $2,000 / ($75,000/12) - calculated from test data  
-            "emergency_fund_ratio": 0.75,  # Realistic: building toward 6-12 months target
-            "investment_capacity": 24000,  # $2,000 * 12 months - calculated from test data
-            "annual_investment_potential": 18000,  # Conservative 75% of savings for investment (debt considerations)
-            "liquid_reserves_months": 8.5,  # Months of expenses covered by emergency fund
-            "disposable_income_ratio": 0.65  # After debt service and expenses: 65% available
-        }
-        
-        current_progress = 50
-        yield create_sse_event("risk_analysis_complete", {
-            "progress": current_progress,
-            "message": "Risk analysis completed successfully",
-            "risk_blueprint": preset_risk_blueprint,
-            "financial_ratios": preset_financial_ratios,
-            "risk_score": 65,
-            "volatility_target": 14.2
-        })
-        
-        await asyncio.sleep(1.0)
-        
-        # Portfolio Construction Phase
-        current_progress = 60
-        construction_message = "Optimizing portfolio allocation based on risk profile"
-        if specific_assets:
-            construction_message += f" and incorporating {len(specific_assets)} user-specified assets"
-        construction_message += "..."
-        
-        yield create_sse_event("portfolio_construction_started", {
-            "progress": current_progress,
-            "message": construction_message,
-            "user_specified_assets": specific_assets
-        })
-        
-        await asyncio.sleep(2.0)
-        
-        # Preset Portfolio Allocation Results - Optimized for test_assessment_data profile
-        # Medium risk, 15-year horizon, ESG focus, $24k annual investment capacity, includes individual stocks
-        preset_portfolio_allocation = {
-            "optimized_weights": {
-                # ETF Holdings (35%)
-                "VTI": 0.07,    # Total Stock Market - ESG screened
-                "VXUS": 0.07,   # International Stocks
-                "ESGV": 0.12,   # ESG-focused US equity (ESG priority from test data)
-                "BND": 0.25,    # Total Bond Market (higher allocation for medium risk)
-                "VTEB": 0.05,   # Tax-Exempt Bonds (tax efficiency for $75k income)
-                "VNQ": 0.02,    # Real Estate REIT
-                "ICLN": 0.03,   # Clean Energy ETF
-                # Individual Technology Stocks (23%)
-                "MSFT": 0.08,   # Microsoft - Cloud technology leader
-                "GOOGL": 0.06,  # Alphabet - Technology innovation
-                "AAPL": 0.05,   # Apple - Consumer technology
-                "NVDA": 0.04,   # NVIDIA - AI/semiconductor leader
-                # Individual Renewable Energy Stocks (9%)
-                "NEE": 0.04,    # NextEra Energy - Renewable energy leader
-                "TSLA": 0.03,   # Tesla - Electric vehicles/clean energy
-                "ENPH": 0.02,   # Enphase Energy - Solar technology
-                # Individual International Stocks (5%)
-                "ASML": 0.03,   # ASML - Semiconductor equipment
-                "TSM": 0.02,    # Taiwan Semi - Chip manufacturing
-                # Individual Real Estate Stock (2%)
-                "PLD": 0.02     # Prologis - Sustainable logistics real estate
-            },
-            "portfolio_metrics": {
-                "expected_return": 0.076,  # Realistic return for balanced ESG portfolio
-                "volatility": 0.145,      # Realistic volatility for 70/30 equity/bond mix
-                "sharpe_ratio": 0.52,     # Realistic risk-adjusted return
-                "max_drawdown": -0.32,    # Realistic maximum potential loss
-                "annual_fee": 0.12        # Weighted average expense ratio with individual stocks
-            },
-            "allocation_summary": {
-                "total_equity": 0.65,     # 65% equity for medium risk, 15-year horizon
-                "total_fixed_income": 0.30,  # 30% bonds for stability
-                "total_alternatives": 0.05,   # 5% REITs for diversification
-                "esg_allocation": 0.90,    # 90% ESG-screened investments (higher with individual stocks)
-                "domestic_allocation": 0.75,  # US market focus
-                "international_allocation": 0.25,
-                "individual_stocks": 0.39,   # 39% individual stock allocation
-                "etf_allocation": 0.61,      # 61% ETF allocation
-                "sectors": {
-                    "technology": 0.29,        # Higher tech allocation (MSFT, GOOGL, AAPL, NVDA + tech ETFs)
-                    "renewable_energy": 0.12,  # ESG theme from test data (TSLA, NEE, ENPH, ICLN)
-                    "real_estate": 0.04,       # VNQ + PLD
-                    "bonds": 0.30,             # BND + VTEB
-                    "international": 0.17,     # VXUS + ASML + TSM
-                    "broad_market": 0.08       # VTI + ESGV (non-sector specific)
-                },
-                "stock_selection_approach": {
-                    "individual_stock_criteria": ["ESG_leadership", "technology_innovation", "renewable_energy_focus"],
-                    "concentration_limits": "max_8%_per_individual_stock",
-                    "diversification_method": "sector_and_geographic_spread"
-                }
-            },
-            "investment_timeline": {
-                "initial_investment": 5000,   # Realistic starter amount for $75k income
-                "monthly_contribution": 1500,  # Conservative: 75% of monthly savings ($2000 * 0.75)  
-                "available_monthly_savings": 2000,  # From test_assessment_data
-                "projected_15_year_value": 485000,  # Realistic projection with 7.6% return
-                "conservative_projection": 420000,  # With 6.5% return scenario
-                "retirement_goal_progress": "slightly_behind_target"  # More realistic assessment
-            },
-            "rebalancing_frequency": "quarterly"
-        }
-        
-        current_progress = 75
-        yield create_sse_event("portfolio_construction_complete", {
-            "progress": current_progress,
-            "message": "Portfolio optimization completed successfully",
-            "portfolio_allocation": preset_portfolio_allocation
-        })
-        
-        await asyncio.sleep(1.0)
-        
-        # Selection Phase
-        current_progress = 80
-        selection_message = "Selecting specific securities and analyzing market conditions"
-        if specific_assets:
-            selection_message += f", prioritizing {len(specific_assets)} user-requested assets"
-        selection_message += "..."
-        
-        yield create_sse_event("selection_started", {
-            "progress": current_progress,
-            "message": selection_message,
-            "prioritizing_assets": specific_assets
-        })
-        
-        await asyncio.sleep(1.5)
-        
-        # Preset Security Selection Results - ESG-focused for test_assessment_data
-        preset_security_selections = {
-            "equity_selections": {
-                "large_cap_esg": [
-                    {"ticker": "ESGV", "name": "Vanguard ESG U.S. Stock ETF", "weight": 0.15, "rationale": "ESG-screened US equities avoiding tobacco/weapons"},
-                    {"ticker": "VTI", "name": "Vanguard Total Stock Market ETF", "weight": 0.10, "rationale": "Broad market exposure with ESG overlay"}
-                ],
-                "individual_technology_stocks": [
-                    {"ticker": "MSFT", "name": "Microsoft Corporation", "weight": 0.08, "rationale": "Leading cloud technology, strong ESG ratings, avoids controversial industries"},
-                    {"ticker": "GOOGL", "name": "Alphabet Inc Class A", "weight": 0.06, "rationale": "Technology innovation leader, renewable energy commitments"},
-                    {"ticker": "AAPL", "name": "Apple Inc", "weight": 0.05, "rationale": "Consumer technology leader with strong ESG initiatives"},
-                    {"ticker": "NVDA", "name": "NVIDIA Corporation", "weight": 0.04, "rationale": "AI/semiconductor leader, powers renewable energy solutions"}
-                ],
-                "renewable_energy_stocks": [
-                    {"ticker": "TSLA", "name": "Tesla Inc", "weight": 0.03, "rationale": "Electric vehicle and clean energy storage leader"},
-                    {"ticker": "NEE", "name": "NextEra Energy Inc", "weight": 0.04, "rationale": "Largest renewable energy generator in North America"},
-                    {"ticker": "ENPH", "name": "Enphase Energy Inc", "weight": 0.02, "rationale": "Solar energy technology and microinverter systems"},
-                    {"ticker": "ICLN", "name": "iShares Global Clean Energy ETF", "weight": 0.03, "rationale": "Diversified renewable energy exposure"}
-                ],
-                "international_esg": [
-                    {"ticker": "VXUS", "name": "Vanguard Total International Stock ETF", "weight": 0.10, "rationale": "Global diversification with ESG considerations"},
-                    {"ticker": "ASML", "name": "ASML Holding NV ADR", "weight": 0.03, "rationale": "Semiconductor equipment leader, critical for tech advancement"},
-                    {"ticker": "TSM", "name": "Taiwan Semiconductor Manufacturing ADR", "weight": 0.02, "rationale": "Leading chip manufacturer with clean technology focus"}
-                ],
-                "real_estate": [
-                    {"ticker": "VNQ", "name": "Vanguard Real Estate ETF", "weight": 0.03, "rationale": "Inflation hedge, excludes tobacco/weapons REITs"},
-                    {"ticker": "PLD", "name": "Prologis Inc", "weight": 0.02, "rationale": "Sustainable logistics real estate, solar installations"}
-                ]
-            },
-            "fixed_income_selections": {
-                "core_bonds": [
-                    {"ticker": "BND", "name": "Vanguard Total Bond Market ETF", "weight": 0.25, "rationale": "Stable income component for medium risk profile"}
-                ],
-                "tax_exempt": [
-                    {"ticker": "VTEB", "name": "Vanguard Tax-Exempt Bond ETF", "weight": 0.05, "rationale": "Tax efficiency for $75k income bracket"}
-                ]
-            },
-            "esg_screening_results": {
-                "excluded_companies": ["Philip Morris", "Lockheed Martin", "British American Tobacco", "Exxon Mobil", "Chevron"],
-                "included_companies": ["Microsoft", "Apple", "Tesla", "NextEra Energy", "Alphabet", "NVIDIA", "ASML", "Prologis"],
-                "included_themes": ["renewable_energy", "technology", "sustainable_infrastructure", "clean_transportation", "energy_efficiency"],
-                "esg_score_minimum": 7.0,
-                "carbon_intensity_limit": "50th percentile",
-                "screening_criteria": {
-                    "avoid_tobacco": True,
-                    "avoid_weapons": True,
-                    "prefer_renewable_energy": True,
-                    "prefer_technology": True,
-                    "minimum_esg_rating": "A-",
-                    "carbon_footprint_target": "net_zero_committed"
-                }
-            },
-            "selection_criteria": {
-                "expense_ratio_threshold": 0.25,  # Allow slightly higher for ESG funds
-                "minimum_aum": 500000000,         # $500M minimum
-                "esg_screening": True,            # From test_assessment_data
-                "liquidity_requirements": "daily",
-                "avoid_industries": ["tobacco", "weapons"],  # From test data
-                "prefer_industries": ["technology", "renewable_energy"],  # From test data
-                "tax_efficiency": True  # Important for $75k income level
-            }
-        }
-        
-        current_progress = 90
-        yield create_sse_event("selection_complete", {
-            "progress": current_progress,
-            "message": "Security selection completed successfully",
-            "security_selections": preset_security_selections
-        })
-        
-        await asyncio.sleep(1.0)
-        
-        # Communication Phase - Final Report Generation
-        current_progress = 95
-        yield create_sse_event("communication_started", {
-            "progress": current_progress,
-            "message": "Generating comprehensive investment report..."
-        })
-        
-        await asyncio.sleep(2.0)
-        
-        # Preset Final Report - Tailored to test_assessment_data profile
-        preset_final_report = {
-            "executive_summary": {
-                "recommendation": "ESG-Focused Balanced Growth Portfolio",
-                "target_allocation": "70% Equity, 26% Bonds, 4% Alternatives",
-                "expected_annual_return": "7.6%",
-                "risk_level": "Medium",
-                "time_horizon": "15 years",
-                "client_profile": "Mid-career investor with moderate debt load and strong savings discipline"
-            },
-            "goal_analysis": {
-                "primary_goals": [
-                    {
-                        "goal": "Retirement Planning",
-                        "priority": 1,
-                        "projected_outcome": "Moderately on track - $485,000 projected at 15-year mark",
-                        "strategy": "Increase contribution rate as income grows, prioritize tax-advantaged accounts"
-                    },
-                    {
-                        "goal": "Buy a Home",
-                        "priority": 2,
-                        "projected_outcome": "Achievable in 4-6 years with dedicated saving plan",
-                        "strategy": "Allocate $500/month to separate high-yield savings for down payment"
-                    }
-                ]
-            },
-            "portfolio_details": {
-                "total_savings_capacity": 24000,     # $2,000 * 12 months - from test_assessment_data
-                "recommended_investment": 18000,     # 75% of savings allocated to investment
-                "monthly_investment": 1500,          # Conservative allocation considering debt
-                "projected_15_year_value": 485000,   # Realistic with 7.6% returns
-                "current_debt_management": {
-                    "total_debt": 25000,             # From test_assessment_data
-                    "debt_to_income_ratio": "33%",   # $25k / $75k - calculated from test data
-                    "recommendation": "Consider debt reduction alongside investing for optimal balance"
-                },
-                "emergency_fund_status": "Building toward 6-12 months target", # More realistic
-                "rebalancing_schedule": "Quarterly",
-                "tax_considerations": {
-                    "income_bracket": "22% federal tax bracket ($75k income)",
-                    "strategy": "Maximize 401(k) to $23,000, Roth IRA to $7,000",
-                    "tax_loss_harvesting": "Implement in taxable accounts",
-                    "asset_location": "Bonds in 401(k), growth stocks in Roth IRA"
-                }
-            },
-            "esg_implementation": {
-                "esg_allocation": "85% of portfolio ESG-screened",
-                "exclusions_applied": ["tobacco", "weapons"],  # From test data
-                "thematic_investments": ["technology", "renewable_energy"],  # From test data
-                "impact_metrics": {
-                    "carbon_footprint_reduction": "40% vs benchmark",
-                    "esg_score": "8.2/10 portfolio average"
-                }
-            },
-            "risk_analysis": {
-                "risk_capacity": preset_risk_blueprint["risk_capacity"],
-                "risk_tolerance": preset_risk_blueprint["risk_tolerance"],
-                "stress_test_results": {
-                    "2008_crisis_scenario": "-25.8%",  # Better due to lower equity allocation
-                    "2020_pandemic_scenario": "-18.5%",
-                    "inflation_scenario": "+12.3%",    # Good inflation protection
-                    "recovery_time": "15-20 months typical for medium risk portfolio"
-                }
-            },
-            "implementation_plan": {
-                "immediate_actions": [
-                    "Open Roth IRA if not already available",
-                    "Increase 401(k) contribution to maximize employer match",
-                    "Set up automatic $2,000 monthly investment"
-                ],
-                "phase_1_months_1_3": "Implement core ETF positions (VTI, BND, ESGV)",
-                "phase_2_months_4_6": "Add international and thematic ESG positions",
-                "phase_3_months_7_12": "Optimize tax efficiency and rebalancing procedures",
-                "ongoing_monitoring": "Quarterly rebalancing, annual goal review"
-            },
-            "fees_and_costs": {
-                "weighted_expense_ratio": "0.12%",  # Slightly higher due to ESG funds
-                "estimated_annual_fees": "$288 on $240,000 portfolio (year 10)",
-                "trading_costs": "Zero commission ETF trades",
-                "total_cost_impact": "Low-cost approach saves ~$15,000 over 15 years vs active funds"
-            },
-            "performance_projections": {
-                "conservative_scenario": "$420,000 (6.5% return)",
-                "expected_scenario": "$485,000 (7.6% return)", 
-                "optimistic_scenario": "$565,000 (9.0% return)",
-                "probability_of_success": "65% chance of meeting long-term financial goals"
-            },
-            "next_steps": [
-                "Review ESG screening criteria and approve selected individual stocks",
-                "Set up automatic investment plan for $1,500/month",
-                "Consider debt reduction strategy to accelerate investment capacity",
-                "Establish dedicated home down payment savings of $500/month",
-                "Book quarterly portfolio review for Q1 2026"
-            ],
-            "disclaimers": [
-                "This analysis is based on test assessment data demonstrating realistic scenarios",
-                "Projections assume $1,500 monthly investments (75% of available savings)",
-                "Individual stock selections add risk but potential for higher returns",
-                "ESG constraints may limit diversification in certain sectors", 
-                "Debt-to-income ratio of 33% considered in conservative projections",
-                "Please consult with a financial advisor for personalized advice"
-            ]
-        }
-        
-        current_progress = 100
-        yield create_sse_event("final_report_complete", {
-            "progress": current_progress,
-            "message": "Investment report generated successfully!",
-            "final_report": preset_final_report,
-            "execution_time": 8.5,
-            "status": "complete"
-        })
-        
-        # COMMENTED OUT: Original agent execution
-        # try:
-        #     # Run the complete workflow (we'll enhance this later for true streaming)
-        #     agent_result = await run_main_agent_safely(user_profile_obj)
-        #     
-        #     if agent_result["success"]:
-        #         workflow_result = agent_result["result"]
-        #         ... (original code)
-        #     else:
-        #         ... (error handling)
-        # except Exception as workflow_error:
-        #     ... (error handling)
+        # Stream events as they come
+        while True:
+            try:
+                # Wait for next event with timeout
+                event_type, data = await asyncio.wait_for(event_queue.get(), timeout=30.0)
+                
+                if event_type == "workflow_complete":
+                    # Workflow finished successfully
+                    result = data["result"]
+                    yield create_sse_event("workflow_complete", {
+                        "progress": 100,
+                        "message": "Workflow completed successfully",
+                        "result": result
+                    })
+                    break
+                elif event_type == "workflow_error":
+                    # Workflow failed
+                    yield create_sse_event("workflow_error", {
+                        "message": f"Workflow failed: {data['error']}",
+                        "type": "workflow_error"
+                    })
+                    break
+                else:
+                    # Regular progress event
+                    yield create_sse_event(event_type, data)
+                    
+            except asyncio.TimeoutError:
+                # No event received within timeout, check if workflow is still running
+                if workflow_task.done():
+                    # Workflow finished but no completion event was sent
+                    try:
+                        result = workflow_task.result()
+                        yield create_sse_event("workflow_complete", {
+                            "progress": 100,
+                            "message": "Workflow completed successfully",
+                            "result": result
+                        })
+                    except Exception as e:
+                        yield create_sse_event("workflow_error", {
+                            "message": f"Workflow failed: {str(e)}",
+                            "type": "workflow_error"
+                        })
+                    break
+                else:
+                    # Still running, send keepalive
+                    yield create_sse_event("keepalive", {
+                        "message": "Workflow in progress...",
+                        "progress": 50
+                    })
         
     except Exception as e:
         logger.error(f"Stream workflow error: {str(e)}")
@@ -1278,8 +961,6 @@ async def get_news_insights_endpoint(request_data: Dict[str, Any]):
             "status": "error",
             "symbol": symbol,
             "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
             "timestamp": datetime.now().isoformat()
         }
 
