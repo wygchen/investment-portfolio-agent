@@ -276,7 +276,7 @@ async def get_news(ticker: str):
     # }
 
 @app.post("/api/ask-question")
-async def ask_portfolio_question(question_data: Dict[str, Any]):
+async def ask_portfolio_question(request: Request):
     """
     Answer questions about portfolio decisions and rationale
     
@@ -284,17 +284,33 @@ async def ask_portfolio_question(question_data: Dict[str, Any]):
     and get detailed explanations powered by the Communication Agent.
     """
     try:
+        question_data = await request.json()
         question = question_data.get("question", "")
         if not question:
             raise HTTPException(status_code=400, detail="Question is required")
         
+        # Get portfolio context from request or use empty dict
+        portfolio_context = question_data.get("portfolio", {})
+        report_context = question_data.get("report", {})
+        
+        # Build context for answer_question
+        context = {
+            "portfolio": portfolio_context,
+            "report": report_context,
+            "question": question
+        }
+        
         # Import communication agent (with fallback if dependencies missing)
         try:
             from communication_agent import answer_question
-            answer = answer_question(question)
+            answer = answer_question(question, context)
         except ImportError as e:
             logger.warning(f"Communication agent dependencies missing: {e}")
             # Fallback to simple Q&A
+            answer = await generate_fallback_answer(question)
+        except Exception as e:
+            logger.error(f"Error in answer_question: {e}")
+            # Fallback if communication agent fails
             answer = await generate_fallback_answer(question)
         
         return {

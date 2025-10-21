@@ -171,12 +171,23 @@ export function InvestmentReportComponent() {
     setAskingQuestion(true)
     
     try {
-      const response = await fetch('http://localhost:8003/api/ask-question', {
+      // Get portfolio context from localStorage
+      const savedPortfolio = localStorage.getItem('portfolioai_portfolio')
+      const savedReport = localStorage.getItem('portfolioai_report')
+      
+      const portfolio = savedPortfolio ? JSON.parse(savedPortfolio) : {}
+      const report = savedReport ? JSON.parse(savedReport) : {}
+      
+      const response = await fetch('http://127.0.0.1:8000/api/ask-question', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ question: currentQuestion })
+        body: JSON.stringify({ 
+          question: currentQuestion,
+          portfolio: portfolio,
+          report: report
+        })
       })
       
       if (response.ok) {
