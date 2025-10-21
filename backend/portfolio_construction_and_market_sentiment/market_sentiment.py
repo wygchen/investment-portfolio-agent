@@ -6,6 +6,10 @@ from textblob import TextBlob
 import os
 from dataclasses import asdict
 from market_sentiment_types import MarketSentiment
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 """
 # Debug flag: set environment variable MARKET_SENTIMENT_DEBUG=1 to print raw LLM responses
@@ -63,9 +67,9 @@ def get_yahoo_news_description(ticker_symbol, max_articles=45):
 # Setup Watsonx LLM
 llm = WatsonxLLM(
     model_id="ibm/granite-3-3-8b-instruct",
-    project_id="9fb38a1d-5fae-47c2-a1a1-780e63b953f7",
-    apikey="0VrXkis1OeScydFGNiufjJItYgNtxKW7RXbY7ODBzp7j",
-    url="https://us-south.ml.cloud.ibm.com",
+    project_id=os.getenv("WATSONX_PROJECT_ID"),
+    apikey=os.getenv("WATSONX_API_KEY"),
+    url=os.getenv("WATSONX_URL"),
     params={
         "decoding_method": "greedy",
         "max_new_tokens": 150,

@@ -33,7 +33,16 @@ interface InvestmentReport {
   risk_commentary: string
   key_recommendations: string[]
   next_steps: string[]
-  report_metadata: {
+  portfolio_allocation?: Record<string, number>
+  individual_holdings?: Array<{
+    name: string
+    symbol: string
+    allocation_percent: number
+    value: number
+  }>
+  pdf_available?: boolean
+  pdf_filename?: string
+  report_metadata?: {
     generated_by: string
     report_type: string
     timestamp: string
@@ -62,7 +71,7 @@ export function InvestmentReportComponent() {
 
   const loadExistingReport = async () => {
     try {
-      const response = await fetch('http://localhost:8003/api/report/latest')
+      const response = await fetch('http://localhost:8000/api/report/latest')
       if (response.ok) {
         const result = await response.json()
         setReport(result.report)
@@ -72,16 +81,70 @@ export function InvestmentReportComponent() {
     }
   }
 
+  const downloadPDF = async () => {
+    if (!report || !(report as any).pdf_filename) {
+      alert('PDF not available. Please generate a report first.')
+      return
+    }
+
+    try {
+      const filename = (report as any).pdf_filename
+      const response = await fetch(`http://localhost:8000/api/download-report/${filename}`)
+      
+      if (response.ok) {
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(a)
+      } else {
+        alert('Failed to download PDF')
+      }
+    } catch (error) {
+      console.error('Error downloading PDF:', error)
+      alert('Error downloading PDF')
+    }
+  }
+
   const generateReport = async () => {
     setLoading(true)
     setError(null)
     
     try {
-      const response = await fetch('http://localhost:8003/api/generate-report', {
+      // Try to get actual portfolio data from localStorage first
+      const savedPortfolio = localStorage.getItem('portfolioai_portfolio')
+      const savedReport = localStorage.getItem('portfolioai_report')
+      const savedFullResult = localStorage.getItem('portfolioai_full_result')
+      
+      let portfolioData = null
+      let reportData = null
+      let fullResult = null
+      
+      try {
+        if (savedPortfolio) portfolioData = JSON.parse(savedPortfolio)
+        if (savedReport) reportData = JSON.parse(savedReport)
+        if (savedFullResult) fullResult = JSON.parse(savedFullResult)
+      } catch (e) {
+        console.error('Error parsing localStorage data:', e)
+      }
+      
+      // If we have actual portfolio data, use it; otherwise use preset
+      const requestBody = (portfolioData && reportData) ? {
+        portfolio: portfolioData,
+        report: reportData,
+        fullResult: fullResult
+      } : null
+      
+      const response = await fetch('http://localhost:8000/api/generate-report', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-        }
+        },
+        body: requestBody ? JSON.stringify(requestBody) : undefined
       })
       
       if (response.ok) {
@@ -239,7 +302,13 @@ export function InvestmentReportComponent() {
                         </div>
                       </div>
                     </div>
-                    <Button variant="outline" size="sm" className="gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="gap-2"
+                      onClick={downloadPDF}
+                      disabled={!(report as any).pdf_available}
+                    >
                       <Download className="w-4 h-4" />
                       Download PDF
                     </Button>
@@ -266,6 +335,68 @@ export function InvestmentReportComponent() {
                   <p className="text-foreground leading-relaxed whitespace-pre-line">{report.allocation_rationale}</p>
                 </CardContent>
               </Card>
+
+              {/* Portfolio Allocation Breakdown */}
+              {report.portfolio_allocation && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Asset Allocation Breakdown</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      {Object.entries(report.portfolio_allocation).map(([assetClass, percentage]) => (
+                        <div key={assetClass} className="flex items-center justify-between">
+                          <span className="text-sm font-medium">{assetClass}</span>
+                          <div className="flex items-center gap-2">
+                            <div className="w-32 h-2 bg-muted rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-primary" 
+                                style={{ width: `${percentage}%` }}
+                              />
+                            </div>
+                            <span className="text-sm font-semibold w-12 text-right">{percentage.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Individual Holdings */}
+              {report.individual_holdings && report.individual_holdings.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Individual Holdings</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b">
+                            <th className="text-left py-2 px-2 text-sm font-semibold">Symbol</th>
+                            <th className="text-left py-2 px-2 text-sm font-semibold">Name</th>
+                            <th className="text-right py-2 px-2 text-sm font-semibold">Allocation</th>
+                            <th className="text-right py-2 px-2 text-sm font-semibold">Value</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {report.individual_holdings.map((holding, index) => (
+                            <tr key={index} className="border-b hover:bg-muted/50">
+                              <td className="py-2 px-2 text-sm font-medium">{holding.symbol}</td>
+                              <td className="py-2 px-2 text-sm">{holding.name}</td>
+                              <td className="py-2 px-2 text-sm text-right">{holding.allocation_percent.toFixed(1)}%</td>
+                              <td className="py-2 px-2 text-sm text-right font-medium">
+                                ${holding.value.toLocaleString()}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Selection Rationale */}
               <Card>
@@ -325,14 +456,16 @@ export function InvestmentReportComponent() {
               </div>
 
               {/* Report Metadata */}
-              <Card className="bg-muted/50">
-                <CardContent className="p-4">
-                  <div className="text-sm text-muted-foreground">
-                    <p>Report generated by: {report.report_metadata.generated_by}</p>
-                    <p>Report type: {report.report_metadata.report_type}</p>
-                  </div>
-                </CardContent>
-              </Card>
+              {(report as any).report_metadata && (
+                <Card className="bg-muted/50">
+                  <CardContent className="p-4">
+                    <div className="text-sm text-muted-foreground">
+                      <p>Report generated by: {(report as any).report_metadata.generated_by}</p>
+                      <p>Report type: {(report as any).report_metadata.report_type}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </>
           ) : (
             <Card>

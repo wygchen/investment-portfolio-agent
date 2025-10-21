@@ -21,6 +21,7 @@ import os
 import asyncio
 import time
 import logging
+import numpy as np
 from datetime import datetime
 from typing import Dict, List, Any, Optional, TypedDict
 
@@ -357,6 +358,9 @@ class MainAgent:
         logger.info("NODE 4: PORTFOLIO CONSTRUCTION")
         logger.info("="*60)
         
+        # Initialize all_tickers at function scope for exception handlers
+        all_tickers = []
+        
         try:
             state["current_node"] = "portfolio_construction"
             
@@ -381,7 +385,6 @@ class MainAgent:
             logger.info("Starting portfolio optimization with selected tickers...")
             
             # Extract all tickers from security selections
-            all_tickers = []
             asset_class_tickers = {}
             
             for asset_class, selection_data in security_selections.items():
@@ -423,7 +426,9 @@ class MainAgent:
                     run_optimization_with_tickers,
                     expected_return,
                     standard_deviation,
-                    sharpe_ratio
+                    sharpe_ratio,
+                    log_returns,  # Import log_returns global variable
+                    adj_close_df  # Import price data
                 )
                 
                 # Run optimization with selected tickers
@@ -455,21 +460,48 @@ class MainAgent:
                 filtered_tickers = [all_tickers[i] for i in range(len(all_tickers)) if optimal_weights[i] > threshold]
                 filtered_weights = [optimal_weights[i] for i in range(len(all_tickers)) if optimal_weights[i] > threshold]
                 
-                # Create portfolio allocation result
+                # Calculate ACTUAL portfolio metrics using the functions
+                try:
+                    weights_array = np.array(filtered_weights)
+                    filtered_log_returns = log_returns[filtered_tickers]
+                    
+                    # Get sentiment scores for filtered tickers
+                    from portfolio_construction_and_market_sentiment.market_sentiment import analyze_market_sentiment
+                    sentiment_results = analyze_market_sentiment(filtered_tickers)
+                    ticker_sentiment = np.array([r.get('avg_score', 0.0) if isinstance(r, dict) else 0.0 for r in sentiment_results], dtype=float)
+                    
+                    # Calculate actual metrics
+                    portfolio_return = expected_return(weights_array, filtered_log_returns, ticker_sentiment)
+                    portfolio_volatility = standard_deviation(weights_array, cov_matrix)
+                    portfolio_sharpe = sharpe_ratio(weights_array, filtered_log_returns, cov_matrix, ticker_sentiment)
+                    
+                    logger.info(f"Calculated portfolio metrics: Return={portfolio_return:.4f}, Vol={portfolio_volatility:.4f}, Sharpe={portfolio_sharpe:.4f}")
+                except Exception as metric_error:
+                    logger.warning(f"Could not calculate metrics, using defaults: {metric_error}")
+                    # Keep the default values assigned earlier
+                
+                # Calculate asset class allocations
+                asset_class_allocations = {}
+                for ticker, weight in zip(filtered_tickers, filtered_weights):
+                    asset_class = self._map_ticker_to_asset_class(ticker)
+                    asset_class_allocations[asset_class] = asset_class_allocations.get(asset_class, 0) + weight
+                
+                # Create portfolio allocation result matching main.py expectations
                 portfolio_allocation = {
-                    "filtered_tickers": {ticker: self._map_ticker_to_asset_class(ticker) for ticker in filtered_tickers},
-                    "filtered_weights": {ticker: weight for ticker, weight in zip(filtered_tickers, filtered_weights)},
-                    "portfolio_metrics": {
-                        "expected_return": portfolio_return,
-                        "volatility": portfolio_volatility,
-                        "sharpe_ratio": portfolio_sharpe,
-                        "total_tickers": len(filtered_tickers)
-                    },
-                    "optimization_config": {
-                        "method": optimization_method,
-                        "covariance_method": covariance_method,
-                        "risk_tolerance": user_risk_tolerance
-                    }
+                    # Keys that main.py expects
+                    "tickers": filtered_tickers,
+                    "weights": filtered_weights,
+                    "weights_map": {ticker: weight for ticker, weight in zip(filtered_tickers, filtered_weights)},
+                    "expected_return": portfolio_return,
+                    "volatility": portfolio_volatility,
+                    "sharpe_ratio": portfolio_sharpe,
+                    "asset_class_allocations": asset_class_allocations,
+                    
+                    # Additional metadata
+                    "total_tickers": len(filtered_tickers),
+                    "optimization_method": optimization_method,
+                    "covariance_method": covariance_method,
+                    "risk_tolerance": user_risk_tolerance
                 }
                 
                 # Update state
@@ -499,16 +531,18 @@ class MainAgent:
                 
             except ImportError as e:
                 logger.error(f"Failed to import portfolio construction module: {e}")
-                # Create a simple fallback allocation
+                # Create a simple fallback allocation matching expected format
+                equal_weight = 1.0 / len(all_tickers)
                 fallback_allocation = {
-                    "filtered_tickers": {ticker: "equity" for ticker in all_tickers},
-                    "filtered_weights": {ticker: 1.0/len(all_tickers) for ticker in all_tickers},
-                    "portfolio_metrics": {
-                        "expected_return": 0.08,
-                        "volatility": 0.12,
-                        "sharpe_ratio": 1.0,
-                        "total_tickers": len(all_tickers)
-                    }
+                    "tickers": all_tickers,
+                    "weights": [equal_weight] * len(all_tickers),
+                    "weights_map": {ticker: equal_weight for ticker in all_tickers},
+                    "expected_return": 0.08,
+                    "volatility": 0.12,
+                    "sharpe_ratio": 1.0,
+                    "asset_class_allocations": {},
+                    "total_tickers": len(all_tickers),
+                    "optimization_method": "equal_weight_fallback"
                 }
                 
                 state["portfolio_construction_state"] = {
@@ -525,16 +559,23 @@ class MainAgent:
         except Exception as e:
             logger.error(f"❌ Portfolio construction failed: {str(e)}")
             
-            # Create fallback allocation with all tickers
+            # Use all_tickers if available, otherwise use default ticker
+            if not all_tickers:
+                logger.warning("No tickers available, using default SPY ticker")
+                all_tickers = ["SPY"]  # Default fallback ticker
+            
+            # Create fallback allocation with all tickers matching expected format
+            equal_weight = 1.0 / len(all_tickers)
             fallback_allocation = {
-                "filtered_tickers": {ticker: "equity" for ticker in all_tickers},
-                "filtered_weights": {ticker: 1.0/len(all_tickers) for ticker in all_tickers},
-                "portfolio_metrics": {
-                    "expected_return": 0.08,
-                    "volatility": 0.12,
-                    "sharpe_ratio": 1.0,
-                    "total_tickers": len(all_tickers)
-                }
+                "tickers": all_tickers,
+                "weights": [equal_weight] * len(all_tickers),
+                "weights_map": {ticker: equal_weight for ticker in all_tickers},
+                "expected_return": 0.08,
+                "volatility": 0.12,
+                "sharpe_ratio": 1.0,
+                "asset_class_allocations": {},
+                "total_tickers": len(all_tickers),
+                "optimization_method": "fallback_due_to_error"
             }
             
             state["portfolio_construction_state"] = {
@@ -772,7 +813,7 @@ class MainAgent:
         except Exception as e:
             logger.warning(f"Failed to save data for communication agent: {e}")
 
-    def run_complete_workflow(self, user_profile: UserProfile, progress_callback=None) -> Dict[str, Any]:
+    async def run_complete_workflow(self, user_profile: UserProfile, progress_callback=None) -> Dict[str, Any]:
         """
         Run the complete investment portfolio workflow
         
@@ -825,8 +866,8 @@ class MainAgent:
             if progress_callback:
                 initial_state["progress_callback"] = progress_callback
                 
-            # Use async execution since some nodes are async (e.g., risk_analysis_node)
-            final_state = asyncio.run(self.workflow.ainvoke(initial_state))
+            # Use await since we're now in an async function
+            final_state = await self.workflow.ainvoke(initial_state)
             
             # Calculate final execution time
             final_state["execution_time"] = time.time() - start_time

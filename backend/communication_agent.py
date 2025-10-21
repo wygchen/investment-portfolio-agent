@@ -36,9 +36,9 @@ class CommunicationAgent:
             # Use same configuration as your teammate's market sentiment agent
             self.llm = WatsonxLLM(
                 model_id="ibm/granite-3-8b-instruct",
-                project_id=os.getenv("WATSONX_PROJECT_ID", "9fb38a1d-5fae-47c2-a1a1-780e63b953f7"),
-                apikey=os.getenv("WATSONX_API_KEY", "0VrXkis1OeScydFGNiufjJItYgNtxKW7RXbY7ODBzp7j"),
-                url=os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com"),
+                project_id=os.getenv("WATSONX_PROJECT_ID"),
+                apikey=os.getenv("WATSONX_API_KEY"),
+                url=os.getenv("WATSONX_URL"),
                 params={
                     "decoding_method": "greedy",
                     "max_new_tokens": 800,
@@ -629,6 +629,230 @@ class CommunicationAgent:
 def answer_question(question: str, context: Dict[str, Any]) -> str:
     agent = CommunicationAgent()
     return agent.answer_portfolio_question(question, context)
+
+
+def generate_pdf_report(report_data: Dict[str, Any]) -> str:
+    """
+    Generate a PDF report from the given report data
+    
+    Args:
+        report_data: Dictionary containing report information
+        
+    Returns:
+        str: Path to the generated PDF file
+    """
+    try:
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+        import os
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"investment_report_{timestamp}.pdf"
+        filepath = os.path.join(os.getcwd(), filename)
+        
+        # Create PDF document
+        doc = SimpleDocTemplate(filepath, pagesize=letter,
+                               rightMargin=72, leftMargin=72,
+                               topMargin=72, bottomMargin=18)
+        
+        # Container for PDF elements
+        story = []
+        
+        # Get styles
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            textColor=colors.HexColor('#1e40af'),
+            spaceAfter=30,
+            alignment=TA_CENTER
+        )
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading2'],
+            fontSize=14,
+            textColor=colors.HexColor('#1e40af'),
+            spaceAfter=12,
+            spaceBefore=12
+        )
+        body_style = ParagraphStyle(
+            'CustomBody',
+            parent=styles['BodyText'],
+            fontSize=10,
+            alignment=TA_JUSTIFY,
+            spaceAfter=12
+        )
+        
+        # Title
+        title = Paragraph(report_data.get("report_title", "Investment Portfolio Analysis Report"), title_style)
+        story.append(title)
+        story.append(Spacer(1, 0.2*inch))
+        
+        # Generated Date
+        date_text = f"<b>Generated:</b> {report_data.get('generated_date', datetime.now().strftime('%B %d, %Y'))}"
+        story.append(Paragraph(date_text, body_style))
+        story.append(Spacer(1, 0.3*inch))
+        
+        # Executive Summary
+        story.append(Paragraph("<b>Executive Summary</b>", heading_style))
+        story.append(Paragraph(report_data.get("executive_summary", ""), body_style))
+        story.append(Spacer(1, 0.2*inch))
+        
+        # Portfolio Allocation
+        if "portfolio_allocation" in report_data:
+            story.append(Paragraph("<b>Portfolio Allocation</b>", heading_style))
+            allocation_data = [["Asset Class", "Allocation %"]]
+            for asset_class, percentage in report_data["portfolio_allocation"].items():
+                allocation_data.append([asset_class, f"{percentage:.1f}%"])
+            
+            allocation_table = Table(allocation_data, colWidths=[4*inch, 2*inch])
+            allocation_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e40af')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 10),
+            ]))
+            story.append(allocation_table)
+            story.append(Spacer(1, 0.2*inch))
+        
+        # Allocation Rationale
+        if "allocation_rationale" in report_data:
+            story.append(Paragraph("<b>Allocation Rationale</b>", heading_style))
+            # Split multi-line text into paragraphs
+            rationale_lines = report_data["allocation_rationale"].split('\n')
+            for line in rationale_lines:
+                if line.strip():
+                    story.append(Paragraph(line, body_style))
+            story.append(Spacer(1, 0.2*inch))
+        
+        # Individual Holdings (Asset Allocation Table)
+        if "individual_holdings" in report_data and report_data["individual_holdings"]:
+            story.append(PageBreak())
+            story.append(Paragraph("<b>Asset Allocation Table</b>", heading_style))
+            story.append(Spacer(1, 0.1*inch))
+            
+            # Add summary text
+            total_value = sum(holding.get('value', 0) for holding in report_data["individual_holdings"])
+            summary_text = f"Total Portfolio Value: <b>${total_value:,.2f}</b> | Holdings: <b>{len(report_data['individual_holdings'])}</b> assets"
+            story.append(Paragraph(summary_text, body_style))
+            story.append(Spacer(1, 0.15*inch))
+            
+            # Create detailed holdings table
+            holdings_data = [["Symbol", "Asset Name", "Weight %", "Value ($)"]]
+            for holding in report_data["individual_holdings"]:
+                holdings_data.append([
+                    holding.get("symbol", ""),
+                    holding.get("name", "")[:35],  # Truncate long names
+                    f"{holding.get('allocation_percent', 0):.2f}%",
+                    f"${holding.get('value', 0):,.2f}"
+                ])
+            
+            # Add total row
+            holdings_data.append(["", "<b>TOTAL</b>", "<b>100.00%</b>", f"<b>${total_value:,.2f}</b>"])
+            
+            holdings_table = Table(holdings_data, colWidths=[0.9*inch, 2.8*inch, 1.0*inch, 1.2*inch])
+            holdings_table.setStyle(TableStyle([
+                # Header styling
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e40af')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('TOPPADDING', (0, 0), (-1, 0), 12),
+                
+                # Data rows styling
+                ('BACKGROUND', (0, 1), (-1, -2), colors.beige),
+                ('GRID', (0, 0), (-1, -2), 1, colors.black),
+                ('FONTNAME', (0, 1), (-1, -2), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -2), 9),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.beige, colors.lightgrey]),
+                
+                # Total row styling
+                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e5e7eb')),
+                ('LINEABOVE', (0, -1), (-1, -1), 2, colors.black),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, -1), (-1, -1), 10),
+                ('TOPPADDING', (0, -1), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, -1), (-1, -1), 8),
+            ]))
+            story.append(holdings_table)
+            story.append(Spacer(1, 0.2*inch))
+        
+        # Selection Rationale
+        if "selection_rationale" in report_data:
+            story.append(Paragraph("<b>Selection Rationale</b>", heading_style))
+            rationale_lines = report_data["selection_rationale"].split('\n')
+            for line in rationale_lines:
+                if line.strip():
+                    story.append(Paragraph(line, body_style))
+            story.append(Spacer(1, 0.2*inch))
+        
+        # Risk Commentary
+        if "risk_commentary" in report_data:
+            story.append(Paragraph("<b>Risk Assessment</b>", heading_style))
+            risk_lines = report_data["risk_commentary"].split('\n')
+            for line in risk_lines:
+                if line.strip():
+                    story.append(Paragraph(line, body_style))
+            story.append(Spacer(1, 0.2*inch))
+        
+        # Key Recommendations
+        if "key_recommendations" in report_data and report_data["key_recommendations"]:
+            story.append(PageBreak())
+            story.append(Paragraph("<b>Key Recommendations</b>", heading_style))
+            for i, rec in enumerate(report_data["key_recommendations"], 1):
+                story.append(Paragraph(f"{i}. {rec}", body_style))
+            story.append(Spacer(1, 0.2*inch))
+        
+        # Next Steps
+        if "next_steps" in report_data and report_data["next_steps"]:
+            story.append(Paragraph("<b>Next Steps</b>", heading_style))
+            for i, step in enumerate(report_data["next_steps"], 1):
+                story.append(Paragraph(f"{i}. {step}", body_style))
+            story.append(Spacer(1, 0.2*inch))
+        
+        # Disclaimer
+        story.append(Spacer(1, 0.3*inch))
+        disclaimer_style = ParagraphStyle(
+            'Disclaimer',
+            parent=styles['BodyText'],
+            fontSize=8,
+            textColor=colors.grey,
+            alignment=TA_JUSTIFY
+        )
+        disclaimer_text = """
+        <b>Disclaimer:</b> This report is for informational purposes only and does not constitute 
+        financial advice. Past performance does not guarantee future results. Please consult with 
+        a qualified financial advisor before making investment decisions.
+        """
+        story.append(Paragraph(disclaimer_text, disclaimer_style))
+        
+        # Build PDF
+        doc.build(story)
+        logger.info(f"PDF report generated successfully: {filepath}")
+        
+        return filepath
+        
+    except ImportError as e:
+        logger.error(f"PDF generation requires reportlab library: {e}")
+        raise ImportError("reportlab library not installed. Install with: pip install reportlab")
+    except Exception as e:
+        logger.error(f"Error generating PDF report: {e}")
+        raise
 
 
 # Example usage and testing

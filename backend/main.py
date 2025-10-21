@@ -3,7 +3,7 @@
 FastAPI Backend
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
@@ -20,10 +20,37 @@ from profile_processor_agent import generate_user_profile
 from main_agent import MainAgent
 from market_news_agent.news_insights import get_news_insights_analysis
 from market_news_agent.market_sentiment import get_yahoo_news_description
+from enhanced_market_analysis import get_enhanced_market_analysis
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Helper function to safely convert objects to JSON-serializable format
+def safe_json_serialize(obj, max_depth=10, _depth=0):
+    """
+    Recursively convert objects to JSON-serializable format, avoiding circular references
+    """
+    if _depth > max_depth:
+        return str(obj)  # Convert to string if too deep
+    
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    
+    if isinstance(obj, dict):
+        return {str(k): safe_json_serialize(v, max_depth, _depth + 1) for k, v in obj.items()}
+    
+    if isinstance(obj, (list, tuple)):
+        return [safe_json_serialize(item, max_depth, _depth + 1) for item in obj]
+    
+    if hasattr(obj, 'to_dict'):
+        return safe_json_serialize(obj.to_dict(), max_depth, _depth + 1)
+    
+    if hasattr(obj, '__dict__'):
+        return safe_json_serialize(obj.__dict__, max_depth, _depth + 1)
+    
+    # For any other type, convert to string
+    return str(obj)
 
 # Create FastAPI app
 app = FastAPI(
@@ -161,27 +188,56 @@ async def process_assessment(assessment_data: FrontendAssessmentData):
         user_profile = profile_result["profile"]
         logger.info("✅ User profile generated successfully")
         
-        # Run main agent workflow
+        # Run main agent workflow (now async)
         logger.info("🤖 Running AI agent workflow...")
         main_agent = MainAgent()
-        agent_result = await main_agent.execute_workflow(user_profile)
+        agent_result = await main_agent.run_complete_workflow(user_profile)
         
-        if not agent_result.get("success"):
+        # Check if workflow succeeded (MainAgent returns "status": "success" or "failed")
+        if agent_result.get("status") != "success":
             raise HTTPException(
                 status_code=500,
                 detail=f"Agent workflow failed: {agent_result.get('error', 'Unknown error')}"
             )
         
-        workflow_result = agent_result["result"]
-        final_report = workflow_result["results"].get("final_report", {})
+        # Extract results from MainAgent response structure
+        results = agent_result.get("results", {})
+        final_report = results.get("final_report", {})
+        portfolio_allocation = results.get("portfolio_allocation", {})
+        risk_blueprint = results.get("risk_blueprint", {})
         
         logger.info("✅ Assessment processing complete")
         
+        # Enhance report with portfolio allocation and risk data for frontend
+        enhanced_report = {
+            **final_report,  # All communication agent content
+            
+            # Add portfolio metrics from portfolio_allocation
+            "individual_holdings": portfolio_allocation.get("weights_map", {}),
+            "asset_class_allocations": portfolio_allocation.get("asset_class_allocations", {}),
+            "expected_return": portfolio_allocation.get("expected_return", 0) * 100 if portfolio_allocation.get("expected_return", 0) < 1 else portfolio_allocation.get("expected_return", 0),  # Convert to % if decimal
+            "volatility": portfolio_allocation.get("volatility", 0) * 100 if portfolio_allocation.get("volatility", 0) < 1 else portfolio_allocation.get("volatility", 0),  # Convert to % if decimal
+            "sharpe_ratio": portfolio_allocation.get("sharpe_ratio", 0),
+            
+            # Add risk metrics
+            "risk_score": risk_blueprint.get("risk_score", 0) if risk_blueprint else 6.5,
+            "confidence": risk_blueprint.get("confidence_level", 85) if risk_blueprint else 85,
+            
+            # Add portfolio structure
+            "total_portfolio_value": 100000,  # Default initial investment
+            "portfolio_tickers": portfolio_allocation.get("tickers", []),
+            "portfolio_weights": portfolio_allocation.get("weights", [])
+        }
+        
+        # Safely serialize all objects to avoid circular references
         return {
             "status": "success",
-            "report": final_report,
-            "profile": user_profile,
-            "execution_time": workflow_result.get("execution_time", 0),
+            "report": safe_json_serialize(enhanced_report),
+            "profile": safe_json_serialize(user_profile),
+            "risk_blueprint": safe_json_serialize(risk_blueprint),
+            "portfolio_allocation": safe_json_serialize(portfolio_allocation),
+            "security_selections": safe_json_serialize(results.get("security_selections")),
+            "execution_time": agent_result.get("execution_time", 0),
             "timestamp": datetime.now().isoformat()
         }
         
@@ -367,16 +423,106 @@ async def generate_report_from_profile_id(request_data: Dict[str, Any]):
 
 
 @app.post("/api/generate-report")
-async def generate_investment_report():
+async def generate_investment_report(request: Request):
     """
-    Generate comprehensive investment report using realistic preset data
+    Generate comprehensive investment report with PDF
     
-    This endpoint generates a professional investment report with portfolio
-    allocation, rationale, and recommendations based on preset user data.
+    Accepts optional portfolio data from request body. If no data provided,
+    uses preset data for demo purposes.
     """
     try:
-        # Use realistic preset data that matches our streaming data
-        preset_report_data = {
+        # Try to get actual portfolio data from request body
+        actual_data = None
+        try:
+            body = await request.json()
+            if body and 'portfolio' in body and 'report' in body:
+                actual_data = body
+                logger.info("Using actual portfolio data from request")
+        except:
+            logger.info("No request body or invalid JSON, using preset data")
+            pass
+        
+        # If we have actual data, transform it for PDF generation
+        if actual_data:
+            portfolio = actual_data.get('portfolio', {})
+            report = actual_data.get('report', {})
+            full_result = actual_data.get('fullResult', {})
+            
+            # Build individual holdings from portfolio
+            individual_holdings = []
+            if 'allocation' in portfolio:
+                allocation = portfolio['allocation']
+                # Handle both array and dict formats
+                if isinstance(allocation, list):
+                    for ticker_data in allocation:
+                        if isinstance(ticker_data, dict):
+                            individual_holdings.append({
+                                "name": ticker_data.get('name', ticker_data.get('symbol', '')),
+                                "symbol": ticker_data.get('symbol', ''),
+                                "allocation_percent": ticker_data.get('percentage', 0),
+                                "value": ticker_data.get('amount', 0)
+                            })
+                elif isinstance(allocation, dict):
+                    for ticker_data in allocation.values():
+                        if isinstance(ticker_data, dict):
+                            individual_holdings.append({
+                                "name": ticker_data.get('name', ticker_data.get('ticker', '')),
+                                "symbol": ticker_data.get('ticker', ''),
+                                "allocation_percent": ticker_data.get('weight', 0) * 100,
+                                "value": ticker_data.get('value', 0)
+                            })
+            
+            # Build asset class allocation from individual holdings
+            portfolio_allocation = {}
+            
+            # First check if asset_class_allocations exists in portfolio
+            if 'asset_class_allocations' in portfolio:
+                for asset_class, percentage in portfolio['asset_class_allocations'].items():
+                    portfolio_allocation[asset_class] = percentage * 100
+            
+            # If no asset class data, categorize holdings by type
+            if not portfolio_allocation and individual_holdings:
+                # Categorize by ticker type (simplified classification)
+                bonds = 0
+                stocks = 0
+                commodities = 0
+                
+                for holding in individual_holdings:
+                    symbol = holding.get('symbol', '').upper()
+                    allocation = holding.get('allocation_percent', 0)
+                    
+                    # Categorize based on common ticker patterns
+                    if any(bond_indicator in symbol for bond_indicator in ['BND', 'AGG', 'TIP', 'LQD', 'HYG', 'MUB', 'BOND']):
+                        bonds += allocation
+                    elif any(commodity in symbol for commodity in ['GLD', 'IAU', 'SLV', 'DBC', 'USO']):
+                        commodities += allocation
+                    else:
+                        stocks += allocation
+                
+                if bonds > 0:
+                    portfolio_allocation['Bonds & Fixed Income'] = bonds
+                if stocks > 0:
+                    portfolio_allocation['Equities'] = stocks
+                if commodities > 0:
+                    portfolio_allocation['Commodities'] = commodities
+
+            
+            report_data = {
+                "report_title": report.get('title', 'Investment Portfolio Analysis Report'),
+                "generated_date": datetime.now().strftime("%B %d, %Y"),
+                "client_id": full_result.get('profile', {}).get('profile_id', 'N/A'),
+                "executive_summary": report.get('executive_summary', ''),
+                "allocation_rationale": report.get('allocation_rationale', ''),
+                "selection_rationale": report.get('selection_rationale', ''),
+                "risk_commentary": report.get('risk_analysis', ''),
+                "key_recommendations": report.get('recommendations', []),
+                "next_steps": report.get('next_steps', []),
+                "portfolio_allocation": portfolio_allocation,
+                "individual_holdings": individual_holdings
+            }
+        else:
+            # Use realistic preset data that matches our streaming data
+            report_data = {
             "report_title": "Investment Portfolio Analysis Report",
             "generated_date": datetime.now().strftime("%B %d, %Y"),
             "client_id": "demo_profile_12345",
@@ -454,19 +600,19 @@ Expected annual return of 7.6% with moderate volatility through systematic diver
         try:
             from communication_agent import generate_pdf_report
             import os
-            pdf_path = generate_pdf_report(preset_report_data)
-            preset_report_data["pdf_available"] = True
-            preset_report_data["pdf_filename"] = os.path.basename(pdf_path)
+            pdf_path = generate_pdf_report(report_data)
+            report_data["pdf_available"] = True
+            report_data["pdf_filename"] = os.path.basename(pdf_path)
         except ImportError as e:
             logger.warning(f"PDF generation unavailable: {e}")
-            preset_report_data["pdf_available"] = False
+            report_data["pdf_available"] = False
         except Exception as e:
             logger.error(f"PDF generation failed: {e}")
-            preset_report_data["pdf_available"] = False
+            report_data["pdf_available"] = False
         
         return {
             "status": "success",
-            "report": preset_report_data,
+            "report": report_data,
             "message": "Investment report generated successfully"
         }
         
@@ -933,8 +1079,11 @@ async def get_portfolio():
 @app.post("/api/news-insights")
 async def get_news_insights_endpoint(request_data: Dict[str, Any]):
     """
-    Get AI news insights for a stock symbol
-    Returns price data, news articles, and market summary
+    Get AI news insights for a stock symbol using enhanced market analysis
+    Returns comprehensive analysis including:
+    - Stock metrics (price, volatility, PE ratio, etc.)
+    - News from multiple sources (Yahoo, Finnhub, Alpha Vantage)
+    - AI-powered market sentiment analysis
     """
     symbol = request_data.get("symbol")
     
@@ -942,21 +1091,37 @@ async def get_news_insights_endpoint(request_data: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Symbol is required")
     
     try:
-        logger.info(f"🔄 Getting news insights for {symbol}")
+        logger.info(f"🔄 Getting enhanced market analysis for {symbol}")
         
-        # Get complete analysis
-        analysis_data = get_news_insights_analysis(symbol)
+        # Get comprehensive analysis from enhanced_market_analysis
+        analysis_data = get_enhanced_market_analysis(symbol)
         
-        logger.info(f"✅ News insights complete for {symbol}")
+        # Transform to match frontend expected format
+        transformed_data = {
+            "symbol": symbol,
+            "priceData": {
+                "price": analysis_data.get('stock_metrics', {}).get('current_price', 0),
+                "change": analysis_data.get('stock_metrics', {}).get('price_change', 0),
+                "changePercent": analysis_data.get('stock_metrics', {}).get('price_change_percent', 0)
+            },
+            "newsArticles": analysis_data.get('related_news', []),
+            "newsUrls": [article.get('url', '') for article in analysis_data.get('related_news', [])],
+            "marketSummary": analysis_data.get('ai_analysis', {}).get('market_sentiment', 'Analysis unavailable'),
+            "timestamp": analysis_data.get('timestamp', datetime.now().isoformat()),
+            "stockMetrics": analysis_data.get('stock_metrics', {}),
+            "keyInsights": analysis_data.get('ai_analysis', {}).get('key_insights', '')
+        }
+        
+        logger.info(f"✅ Enhanced market analysis complete for {symbol}")
         
         return {
             "status": "success",
-            "data": analysis_data,
+            "data": transformed_data,
             "timestamp": datetime.now().isoformat()
         }
         
     except Exception as e:
-        logger.error(f"Error getting news insights for {symbol}: {str(e)}")
+        logger.error(f"Error getting enhanced market analysis for {symbol}: {str(e)}")
         return {
             "status": "error",
             "symbol": symbol,

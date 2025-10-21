@@ -17,8 +17,11 @@ export function MarketDataWidget({ className }: MarketDataWidgetProps) {
   ])
 
   const [lastUpdate, setLastUpdate] = useState(new Date())
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
+    setMounted(true)
+    
     const interval = setInterval(() => {
       setLastUpdate(new Date())
       // Simulate real-time updates
@@ -67,7 +70,9 @@ export function MarketDataWidget({ className }: MarketDataWidgetProps) {
           </div>
         ))}
         <div className="pt-2 border-t border-border">
-          <div className="text-xs text-muted-foreground">Last updated: {lastUpdate.toLocaleTimeString()}</div>
+          <div className="text-xs text-muted-foreground">
+            Last updated: {mounted ? lastUpdate.toLocaleTimeString() : '--:--:--'}
+          </div>
         </div>
       </CardContent>
     </Card>

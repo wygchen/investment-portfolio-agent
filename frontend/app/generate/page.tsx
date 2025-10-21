@@ -5,11 +5,12 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Brain, Zap, Shield, BarChart3, CheckCircle, ArrowRight, Sparkles, Loader2, AlertCircle } from "lucide-react"
+import { Brain, Zap, Shield, BarChart3, CheckCircle, ArrowRight, Sparkles, Loader2, AlertCircle, RefreshCw } from "lucide-react"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { apiClient, type PortfolioRecommendation, type AssessmentData, handleAPIError } from "@/lib/api"
+import { transformAssessmentToBackend, transformReportToPortfolio } from "@/lib/data-transformers"
 
 // Interface matching the API response
 interface PortfolioAllocation {
@@ -70,8 +71,30 @@ export default function GeneratePage() {
   const [portfolio, setPortfolio] = useState<PortfolioRecommendationLocal | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [assessmentData, setAssessmentData] = useState<AssessmentData | null>(null)
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking')
   
   const router = useRouter()
+
+  // Check backend health on mount
+  useEffect(() => {
+    const checkBackendHealth = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/health');
+        if (response.ok) {
+          setBackendStatus('online');
+          console.log('✅ Backend server is online');
+        } else {
+          setBackendStatus('offline');
+          console.warn('⚠️ Backend server returned error');
+        }
+      } catch (err) {
+        setBackendStatus('offline');
+        console.error('❌ Backend server is offline:', err);
+      }
+    };
+    
+    checkBackendHealth();
+  }, []);
 
   // Load assessment data on component mount
   useEffect(() => {
@@ -121,20 +144,47 @@ export default function GeneratePage() {
 
   const generatePortfolioFromAPI = async (data: AssessmentData) => {
     try {
-      console.log('Generating portfolio with assessment data:', data)
-      const result = await apiClient.generatePortfolio(data)
+      console.log('🚀 Generating portfolio with assessment data:', data)
       
-      // Convert API response to local format
-      const portfolioData: PortfolioRecommendationLocal = {
-        allocation: result.allocation.map(item => ({
-          ...item,
-          color: item.color || getRandomColor()
-        })),
-        expected_return: result.expected_return,
-        volatility: result.volatility,
-        sharpe_ratio: result.sharpe_ratio,
-        risk_score: result.risk_score,
-        confidence: result.confidence
+      // Transform frontend assessment data to backend format
+      const backendData = transformAssessmentToBackend(data);
+      console.log('📤 Transformed backend data:', backendData);
+      
+      // Call backend process-assessment endpoint directly
+      const response = await fetch('http://127.0.0.1:8000/api/process-assessment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(backendData)
+      });
+      
+      console.log('📡 Response status:', response.status);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('❌ Backend error response:', errorData);
+        throw new Error(errorData.detail || `Backend error: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('✅ Backend response received:', result);
+      
+      // Check if result has the expected structure
+      if (!result.report) {
+        console.error('❌ No report in backend response');
+        throw new Error('Backend returned incomplete data: missing report');
+      }
+      
+      // Transform backend report to frontend portfolio format
+      const portfolioData: PortfolioRecommendationLocal = transformReportToPortfolio(result.report);
+      
+      console.log('📊 Portfolio data transformed:', portfolioData);
+      
+      // Validate portfolio data
+      if (!portfolioData.allocation || portfolioData.allocation.length === 0) {
+        console.error('❌ No portfolio allocation data');
+        throw new Error('Backend returned empty portfolio allocation');
       }
       
       setPortfolio(portfolioData)
@@ -143,11 +193,15 @@ export default function GeneratePage() {
       // Save portfolio data for dashboard
       if (typeof window !== 'undefined') {
         localStorage.setItem('portfolioai_portfolio', JSON.stringify(portfolioData))
+        localStorage.setItem('portfolioai_report', JSON.stringify(result.report))
+        localStorage.setItem('portfolioai_full_result', JSON.stringify(result))
+        console.log('💾 Portfolio saved to localStorage');
       }
       
     } catch (err) {
-      console.error('Error generating portfolio:', err)
-      setError(handleAPIError(err))
+      console.error('❌ Error generating portfolio:', err)
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      setError(`Failed to generate portfolio: ${errorMessage}`)
       setIsGenerating(false)
     }
   }
@@ -182,7 +236,29 @@ export default function GeneratePage() {
       </header>
 
       <div className="container mx-auto px-6 py-8 max-w-6xl">
-        {error ? (
+        {backendStatus === 'offline' ? (
+          <div className="text-center space-y-6">
+            <div className="w-16 h-16 bg-destructive/10 rounded-full flex items-center justify-center mx-auto">
+              <AlertCircle className="w-8 h-8 text-destructive" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-destructive mb-2">Backend Server Offline</h1>
+              <p className="text-muted-foreground max-w-md mx-auto mb-4">
+                Unable to connect to the backend server. Please ensure the backend is running.
+              </p>
+              <div className="bg-muted p-4 rounded-lg text-left max-w-xl mx-auto">
+                <p className="text-sm font-mono text-muted-foreground mb-2">Start the backend server:</p>
+                <code className="text-sm bg-background p-2 rounded block">
+                  cd backend && python main.py
+                </code>
+              </div>
+            </div>
+            <Button onClick={() => window.location.reload()} variant="outline">
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Retry Connection
+            </Button>
+          </div>
+        ) : error ? (
           <div className="text-center space-y-6">
             <div className="w-16 h-16 bg-destructive/10 rounded-full flex items-center justify-center mx-auto">
               <AlertCircle className="w-8 h-8 text-destructive" />

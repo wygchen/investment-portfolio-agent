@@ -18,6 +18,10 @@ from portfolio_types import PortfolioResult
 # Import market sentiment score function
 import sys
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from market_sentiment import analyze_market_sentiment
 try:
@@ -248,9 +252,14 @@ risk_free_rate = get_risk_free_rate(default_rate=0.02)
 
 """alternative use the follows:
 # Setting up the FredAPI Key
-fred = Fred(api_key='189872e56e87c2a674b98c905c49a289')
-ten_year_treasury_rate = fred.get_series_latest_release('GS10') / 100       # get GS10 from API. GS10 means 10 years treasury rate, the /100 to get in % form
-risk_free_rate = ten_year_treasury_rate.iloc[-1]                            # set the GS10 as the risk_free_rate
+fred_api_key = os.getenv('FRED_API_KEY')
+if fred_api_key:
+    fred = Fred(api_key=fred_api_key)
+    ten_year_treasury_rate = fred.get_series_latest_release('GS10') / 100       # get GS10 from API. GS10 means 10 years treasury rate, the /100 to get in % form
+    risk_free_rate = ten_year_treasury_rate.iloc[-1]                            # set the GS10 as the risk_free_rate
+else:
+    # Use default risk-free rate if FRED API key not available
+    risk_free_rate = 0.02
  """
 
 # Define the function to minimize (negative Sharpe Ratio)

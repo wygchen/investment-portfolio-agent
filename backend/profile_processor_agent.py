@@ -169,9 +169,10 @@ def generate_user_profile(frontend_data: Dict[str, Any]) -> Dict[str, Any]:
     user_profile = process_frontend_data(frontend_data)
     
     return {
+        "success": True,
+        "profile": user_profile,
         "profile_data": user_profile.to_dict(),
-        "profile_object": user_profile,
-        "status": "success"
+        "profile_object": user_profile
     }
 
 
