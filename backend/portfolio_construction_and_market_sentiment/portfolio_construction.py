@@ -18,6 +18,10 @@ from portfolio_types import PortfolioResult
 # Import market sentiment score function
 import sys
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from market_sentiment import analyze_market_sentiment
 try:
@@ -55,45 +59,89 @@ for assets in asset_class_tickers.values():
 
 
 
-# Try to load market selection from the latest discovery profile saved by DiscoveryAgent
-shared_profile_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'shared_data', 'latest_profile.json')
+# Import selection agent
+import sys
+import os
+selection_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'selection')
+sys.path.insert(0, selection_path)
+from selection_agent import run_selection_agent
 
-def _select_tickers_from_profile(path: str):
-    """Read a discovery profile JSON and return a list of tickers based on market_selection.
-
-    Expected `market_selection` values in the profile: list containing any of 'US', 'HK'.
-    Returns default_tickers on error or unknown selection.
+def get_tickers_from_selection_agent(profile_path: str = None):
+    """Get tickers using the selection agent based on user preferences and market data.
+    
+    Returns:
+        tuple: (tickers_list, weights_dict) where tickers_list is a list of selected tickers
+               and weights_dict contains the initial weights for optimization
     """
     try:
-        import json
-        if not os.path.exists(path):
-            print(f"Discovery profile not found at {path}; using default tickers")
-            return default_tickers
-        with open(path, 'r') as f:
-            profile = json.load(f)
-        market_selection = profile.get('market_selection') or profile.get('marketSelection') or []
-        # Normalize to uppercase strings
-        market_selection = [m.upper() for m in market_selection if isinstance(m, str)]
-        tickers = []
-        if 'US' in market_selection:
-            # US equity/ETF basket
-            tickers.extend(['SPY', 'QQQ'])
-        if 'HK' in market_selection:
-            # Common Hong Kong tickers (HKEX listings use .HK suffix)
-            # These are example large-cap HK tickers; adjust as needed for your data sources
-            tickers.extend(['0700.HK', '0988.HK', '0939.HK', 'EWH'])
-        # If user asked for other markets or list is empty, fall back to defaults
-        if not tickers:
-            return default_tickers
-        return tickers
+        # Default preferences if no profile exists
+        regions = ['US']
+        sectors = ['Technology', 'Healthcare', 'Financial', 'Consumer Discretionary']
+        
+        # Try to load preferences from profile if it exists
+        if profile_path and os.path.exists(profile_path):
+            with open(profile_path, 'r') as f:
+                profile = json.load(f)
+                regions = profile.get('regions', regions)
+                sectors = profile.get('sectors', sectors)
+        
+        # Initial universe organized by asset class
+        initial_tickers = {
+            'equity': [t for t in asset_class_tickers['US_EQUITIES']],
+            'bonds': [t for t in asset_class_tickers['BONDS']],
+        }
+        
+        # Initial weights (equal weight within each class)
+        equity_weight = 0.6  # 60% equity default
+        initial_weights = {}
+        for asset_class, ticks in initial_tickers.items():
+            weight = equity_weight if asset_class == 'equity' else (1 - equity_weight)
+            per_ticker = weight / len(ticks)
+            for t in ticks:
+                initial_weights[t] = per_ticker
+        
+        # Run selection agent
+        selection_results = run_selection_agent(
+            regions=regions,
+            sectors=sectors,
+            filtered_tickers=initial_tickers,
+            filtered_weights=initial_weights
+        )
+        
+        if selection_results['success']:
+            # Extract selected tickers and their weights from results
+            final_selections = selection_results['final_selections']
+            all_selections = final_selections.get('all_selections', [])
+            
+            # Combine all selected tickers
+            selected_tickers = []
+            selected_weights = {}
+            
+            for selection in all_selections:
+                ticker = selection.get('ticker')
+                if ticker:
+                    selected_tickers.append(ticker)
+                    # Use score-based weight if available, else equal weight
+                    selected_weights[ticker] = selection.get('score', 50) / 100.0
+            
+            # Normalize weights
+            if selected_weights:
+                total = sum(selected_weights.values())
+                selected_weights = {k: v/total for k, v in selected_weights.items()}
+            
+            return selected_tickers, selected_weights
+            
     except Exception as e:
-        print(f"Failed to read discovery profile ({e}); using default tickers")
-        return default_tickers
+        print(f"Selection agent error: {e}; falling back to default tickers")
+    
+    # Fallback: return default tickers with equal weights
+    return default_tickers, {t: 1.0/len(default_tickers) for t in default_tickers}
 
+# Get shared profile path
+shared_profile_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'shared_data', 'latest_profile.json')
 
-# Resolve tickers to use for portfolio construction
-# Resolve tickers to use for portfolio construction
-tickers = _select_tickers_from_profile(shared_profile_path)
+# Get tickers and initial weights from selection agent
+tickers, initial_weights = get_tickers_from_selection_agent(shared_profile_path)
 
 # Set the end date to today
 end_date = datetime.today()         # get today's date
@@ -248,9 +296,14 @@ risk_free_rate = get_risk_free_rate(default_rate=0.02)
 
 """alternative use the follows:
 # Setting up the FredAPI Key
-fred = Fred(api_key='189872e56e87c2a674b98c905c49a289')
-ten_year_treasury_rate = fred.get_series_latest_release('GS10') / 100       # get GS10 from API. GS10 means 10 years treasury rate, the /100 to get in % form
-risk_free_rate = ten_year_treasury_rate.iloc[-1]                            # set the GS10 as the risk_free_rate
+fred_api_key = os.getenv('FRED_API_KEY')
+if fred_api_key:
+    fred = Fred(api_key=fred_api_key)
+    ten_year_treasury_rate = fred.get_series_latest_release('GS10') / 100       # get GS10 from API. GS10 means 10 years treasury rate, the /100 to get in % form
+    risk_free_rate = ten_year_treasury_rate.iloc[-1]                            # set the GS10 as the risk_free_rate
+else:
+    # Use default risk-free rate if FRED API key not available
+    risk_free_rate = 0.02
  """
 
 # Define the function to minimize (negative Sharpe Ratio)
@@ -646,5 +699,4 @@ print(json.dumps(weights_map, indent=2))
 # save to file
 with open("filtered_weights.json", "w") as f:
     json.dump(weights_map, f, indent=2)
-
 """
