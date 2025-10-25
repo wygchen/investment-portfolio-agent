@@ -75,43 +75,17 @@ export function DiscoveryFlow() {
     if (currentStep < STEPS.length) {
       setCurrentStep(currentStep + 1)
     } else {
-      // Submit profile to discovery agent backend
+      // Save profile to localStorage with correct key for generate page
       console.log("Final Profile:", profile)
       
-      try {
-        // Send profile to discovery agent backend
-        const response = await fetch('http://localhost:8000/api/process-assessment', { 
-          method: 'POST', 
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(profile) 
-        })
-        
-        if (response.ok) {
-          const result = await response.json()
-          console.log('Discovery Agent Response:', result)
-          
-          // Store the profile ID for future reference
-          localStorage.setItem('profileId', result.profile_id)
-          localStorage.setItem('investmentProfile', JSON.stringify(profile))
-          
-          alert(`Profile processed successfully! Profile ID: ${result.profile_id}`)
-        } else {
-          console.error('Failed to process profile:', response.statusText)
-          // Fallback to localStorage
-          localStorage.setItem('investmentProfile', JSON.stringify(profile))
-        }
-        
-        // Redirect to dashboard
-        router.push('/dashboard')
-      } catch (error) {
-        console.error('Error saving profile:', error)
-        // Fallback to localStorage even if backend fails
-        localStorage.setItem('investmentProfile', JSON.stringify(profile))
-        alert('Profile saved locally. Backend may not be running.')
-        router.push('/dashboard')
-      }
+      // Save with BOTH keys for compatibility
+      localStorage.setItem('investmentProfile', JSON.stringify(profile))
+      localStorage.setItem('portfolioai_assessment', JSON.stringify(profile))
+      
+      console.log('✅ Profile saved to localStorage')
+      
+      // Redirect to generate page to create portfolio
+      router.push('/generate')
     }
   }
 

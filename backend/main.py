@@ -3,7 +3,13 @@
 FastAPI Backend
 """
 
-from fastapi import FastAPI, HTTPException
+# Load env vars as early as possible so modules that import at module-level
+# can see WATSONX_API_KEY and other credentials. This must run before other
+# imports that might instantiate LLMs or SDK clients.
+from dotenv import load_dotenv
+load_dotenv()
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
@@ -19,10 +25,51 @@ from profile_processor_agent import generate_user_profile
 # Import main agent for workflow execution
 from main_agent import MainAgent
 from market_news_agent.news_insights import get_news_insights_analysis
+from market_news_agent.market_sentiment import get_yahoo_news_description
+from enhanced_market_analysis import get_enhanced_market_analysis
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Helper function to safely convert objects to JSON-serializable format
+def safe_json_serialize(obj, max_depth=10, _depth=0):
+    """
+    Recursively convert objects to JSON-serializable format, avoiding circular references
+    """
+    if _depth > max_depth:
+        return str(obj)  # Convert to string if too deep
+    
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    
+    if isinstance(obj, dict):
+        return {str(k): safe_json_serialize(v, max_depth, _depth + 1) for k, v in obj.items()}
+    
+    if isinstance(obj, (list, tuple)):
+        return [safe_json_serialize(item, max_depth, _depth + 1) for item in obj]
+    
+    if hasattr(obj, 'to_dict'):
+        return safe_json_serialize(obj.to_dict(), max_depth, _depth + 1)
+    
+    if hasattr(obj, '__dict__'):
+        return safe_json_serialize(obj.__dict__, max_depth, _depth + 1)
+    
+    # For any other type, convert to string
+    return str(obj)
+
+from dotenv import load_dotenv
+
+# Load environment variables from .env (if present) as early as possible so
+# modules that instantiate LLMs or SDK clients can read API keys.
+load_dotenv()
+
+# Log presence of critical Watsonx env vars (do NOT log secret values)
+import os
+logger = logging.getLogger(__name__)
+logger.info("WATSONX_APIKEY present: %s", bool(os.getenv("WATSONX_APIKEY")))
+logger.info("WATSONX_PROJECT_ID present: %s", bool(os.getenv("WATSONX_PROJECT_ID")))
+logger.info("WATSONX_URL present: %s", bool(os.getenv("WATSONX_URL")))
 
 # Create FastAPI app
 app = FastAPI(
@@ -31,13 +78,14 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configure CORS
+# Configure CORS - Restricted to specific domains for security
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for production deployment
+    allow_origins=allowed_origins,  # Restricted to specific domains
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 # No initialization needed - using standalone functions
@@ -160,27 +208,56 @@ async def process_assessment(assessment_data: FrontendAssessmentData):
         user_profile = profile_result["profile"]
         logger.info("✅ User profile generated successfully")
         
-        # Run main agent workflow
+        # Run main agent workflow (now async)
         logger.info("🤖 Running AI agent workflow...")
         main_agent = MainAgent()
-        agent_result = await main_agent.execute_workflow(user_profile)
+        agent_result = await main_agent.run_complete_workflow(user_profile)
         
-        if not agent_result.get("success"):
+        # Check if workflow succeeded (MainAgent returns "status": "success" or "failed")
+        if agent_result.get("status") != "success":
             raise HTTPException(
                 status_code=500,
                 detail=f"Agent workflow failed: {agent_result.get('error', 'Unknown error')}"
             )
         
-        workflow_result = agent_result["result"]
-        final_report = workflow_result["results"].get("final_report", {})
+        # Extract results from MainAgent response structure
+        results = agent_result.get("results", {})
+        final_report = results.get("final_report", {})
+        portfolio_allocation = results.get("portfolio_allocation", {})
+        risk_blueprint = results.get("risk_blueprint", {})
         
         logger.info("✅ Assessment processing complete")
         
+        # Enhance report with portfolio allocation and risk data for frontend
+        enhanced_report = {
+            **final_report,  # All communication agent content
+            
+            # Add portfolio metrics from portfolio_allocation
+            "individual_holdings": portfolio_allocation.get("weights_map", {}),
+            "asset_class_allocations": portfolio_allocation.get("asset_class_allocations", {}),
+            "expected_return": portfolio_allocation.get("expected_return", 0) * 100 if portfolio_allocation.get("expected_return", 0) < 1 else portfolio_allocation.get("expected_return", 0),  # Convert to % if decimal
+            "volatility": portfolio_allocation.get("volatility", 0) * 100 if portfolio_allocation.get("volatility", 0) < 1 else portfolio_allocation.get("volatility", 0),  # Convert to % if decimal
+            "sharpe_ratio": portfolio_allocation.get("sharpe_ratio", 0),
+            
+            # Add risk metrics
+            "risk_score": risk_blueprint.get("risk_score", 0) if risk_blueprint else 6.5,
+            "confidence": risk_blueprint.get("confidence_level", 85) if risk_blueprint else 85,
+            
+            # Add portfolio structure
+            "total_portfolio_value": 100000,  # Default initial investment
+            "portfolio_tickers": portfolio_allocation.get("tickers", []),
+            "portfolio_weights": portfolio_allocation.get("weights", [])
+        }
+        
+        # Safely serialize all objects to avoid circular references
         return {
             "status": "success",
-            "report": final_report,
-            "profile": user_profile,
-            "execution_time": workflow_result.get("execution_time", 0),
+            "report": safe_json_serialize(enhanced_report),
+            "profile": safe_json_serialize(user_profile),
+            "risk_blueprint": safe_json_serialize(risk_blueprint),
+            "portfolio_allocation": safe_json_serialize(portfolio_allocation),
+            "security_selections": safe_json_serialize(results.get("security_selections")),
+            "execution_time": agent_result.get("execution_time", 0),
             "timestamp": datetime.now().isoformat()
         }
         
@@ -219,7 +296,7 @@ async def get_news(ticker: str):
     # }
 
 @app.post("/api/ask-question")
-async def ask_portfolio_question(question_data: Dict[str, Any]):
+async def ask_portfolio_question(request: Request):
     """
     Answer questions about portfolio decisions and rationale
     
@@ -227,17 +304,33 @@ async def ask_portfolio_question(question_data: Dict[str, Any]):
     and get detailed explanations powered by the Communication Agent.
     """
     try:
+        question_data = await request.json()
         question = question_data.get("question", "")
         if not question:
             raise HTTPException(status_code=400, detail="Question is required")
         
+        # Get portfolio context from request or use empty dict
+        portfolio_context = question_data.get("portfolio", {})
+        report_context = question_data.get("report", {})
+        
+        # Build context for answer_question
+        context = {
+            "portfolio": portfolio_context,
+            "report": report_context,
+            "question": question
+        }
+        
         # Import communication agent (with fallback if dependencies missing)
         try:
             from communication_agent import answer_question
-            answer = answer_question(question)
+            answer = answer_question(question, context)
         except ImportError as e:
             logger.warning(f"Communication agent dependencies missing: {e}")
             # Fallback to simple Q&A
+            answer = await generate_fallback_answer(question)
+        except Exception as e:
+            logger.error(f"Error in answer_question: {e}")
+            # Fallback if communication agent fails
             answer = await generate_fallback_answer(question)
         
         return {
@@ -324,7 +417,7 @@ async def generate_report_from_profile_id(request_data: Dict[str, Any]):
             )
         
         # Convert dict to UserProfile object for main agent
-        from profile_processor import UserProfile
+        from profile_processor_agent import UserProfile
         user_profile_obj = UserProfile(
             goals=profile_data.get("goals", []),
             time_horizon=profile_data.get("time_horizon", 10),
@@ -366,16 +459,106 @@ async def generate_report_from_profile_id(request_data: Dict[str, Any]):
 
 
 @app.post("/api/generate-report")
-async def generate_investment_report():
+async def generate_investment_report(request: Request):
     """
-    Generate comprehensive investment report using realistic preset data
+    Generate comprehensive investment report with PDF
     
-    This endpoint generates a professional investment report with portfolio
-    allocation, rationale, and recommendations based on preset user data.
+    Accepts optional portfolio data from request body. If no data provided,
+    uses preset data for demo purposes.
     """
     try:
-        # Use realistic preset data that matches our streaming data
-        preset_report_data = {
+        # Try to get actual portfolio data from request body
+        actual_data = None
+        try:
+            body = await request.json()
+            if body and 'portfolio' in body and 'report' in body:
+                actual_data = body
+                logger.info("Using actual portfolio data from request")
+        except:
+            logger.info("No request body or invalid JSON, using preset data")
+            pass
+        
+        # If we have actual data, transform it for PDF generation
+        if actual_data:
+            portfolio = actual_data.get('portfolio', {})
+            report = actual_data.get('report', {})
+            full_result = actual_data.get('fullResult', {})
+            
+            # Build individual holdings from portfolio
+            individual_holdings = []
+            if 'allocation' in portfolio:
+                allocation = portfolio['allocation']
+                # Handle both array and dict formats
+                if isinstance(allocation, list):
+                    for ticker_data in allocation:
+                        if isinstance(ticker_data, dict):
+                            individual_holdings.append({
+                                "name": ticker_data.get('name', ticker_data.get('symbol', '')),
+                                "symbol": ticker_data.get('symbol', ''),
+                                "allocation_percent": ticker_data.get('percentage', 0),
+                                "value": ticker_data.get('amount', 0)
+                            })
+                elif isinstance(allocation, dict):
+                    for ticker_data in allocation.values():
+                        if isinstance(ticker_data, dict):
+                            individual_holdings.append({
+                                "name": ticker_data.get('name', ticker_data.get('ticker', '')),
+                                "symbol": ticker_data.get('ticker', ''),
+                                "allocation_percent": ticker_data.get('weight', 0) * 100,
+                                "value": ticker_data.get('value', 0)
+                            })
+            
+            # Build asset class allocation from individual holdings
+            portfolio_allocation = {}
+            
+            # First check if asset_class_allocations exists in portfolio
+            if 'asset_class_allocations' in portfolio:
+                for asset_class, percentage in portfolio['asset_class_allocations'].items():
+                    portfolio_allocation[asset_class] = percentage * 100
+            
+            # If no asset class data, categorize holdings by type
+            if not portfolio_allocation and individual_holdings:
+                # Categorize by ticker type (simplified classification)
+                bonds = 0
+                stocks = 0
+                commodities = 0
+                
+                for holding in individual_holdings:
+                    symbol = holding.get('symbol', '').upper()
+                    allocation = holding.get('allocation_percent', 0)
+                    
+                    # Categorize based on common ticker patterns
+                    if any(bond_indicator in symbol for bond_indicator in ['BND', 'AGG', 'TIP', 'LQD', 'HYG', 'MUB', 'BOND']):
+                        bonds += allocation
+                    elif any(commodity in symbol for commodity in ['GLD', 'IAU', 'SLV', 'DBC', 'USO']):
+                        commodities += allocation
+                    else:
+                        stocks += allocation
+                
+                if bonds > 0:
+                    portfolio_allocation['Bonds & Fixed Income'] = bonds
+                if stocks > 0:
+                    portfolio_allocation['Equities'] = stocks
+                if commodities > 0:
+                    portfolio_allocation['Commodities'] = commodities
+
+            
+            report_data = {
+                "report_title": report.get('title', 'Investment Portfolio Analysis Report'),
+                "generated_date": datetime.now().strftime("%B %d, %Y"),
+                "client_id": full_result.get('profile', {}).get('profile_id', 'N/A'),
+                "executive_summary": report.get('executive_summary', ''),
+                "allocation_rationale": report.get('allocation_rationale', ''),
+                "selection_rationale": report.get('selection_rationale', ''),
+                "risk_commentary": report.get('risk_analysis', ''),
+                "key_recommendations": report.get('recommendations', []),
+                "next_steps": report.get('next_steps', []),
+                "portfolio_allocation": portfolio_allocation,
+                "individual_holdings": individual_holdings
+            }
+        else:
+            # Use realistic preset data that matches our streaming data
+            report_data = {
             "report_title": "Investment Portfolio Analysis Report",
             "generated_date": datetime.now().strftime("%B %d, %Y"),
             "client_id": "demo_profile_12345",
@@ -453,19 +636,19 @@ Expected annual return of 7.6% with moderate volatility through systematic diver
         try:
             from communication_agent import generate_pdf_report
             import os
-            pdf_path = generate_pdf_report(preset_report_data)
-            preset_report_data["pdf_available"] = True
-            preset_report_data["pdf_filename"] = os.path.basename(pdf_path)
+            pdf_path = generate_pdf_report(report_data)
+            report_data["pdf_available"] = True
+            report_data["pdf_filename"] = os.path.basename(pdf_path)
         except ImportError as e:
             logger.warning(f"PDF generation unavailable: {e}")
-            preset_report_data["pdf_available"] = False
+            report_data["pdf_available"] = False
         except Exception as e:
             logger.error(f"PDF generation failed: {e}")
-            preset_report_data["pdf_available"] = False
+            report_data["pdf_available"] = False
         
         return {
             "status": "success",
-            "report": preset_report_data,
+            "report": report_data,
             "message": "Investment report generated successfully"
         }
         
@@ -598,7 +781,7 @@ def create_user_profile_object(user_profile: dict):
     """
     Convert profile dict to UserProfile object for main agent
     """
-    from profile_processor import UserProfile
+    from profile_processor_agent import UserProfile
     
     return UserProfile(
         goals=user_profile.get("goals", []),
@@ -619,7 +802,7 @@ def create_user_profile_object(user_profile: dict):
 async def stream_main_agent_workflow(user_profile):
     """
     Stream the complete MainAgent workflow with real-time updates
-    DEMO VERSION - Using preset data instead of actual agents
+    REAL AGENT VERSION - Using actual agent execution with streaming callbacks
     """
     try:
         # Convert to UserProfile object
@@ -639,396 +822,78 @@ async def stream_main_agent_workflow(user_profile):
         logger.info(f"ESG prioritization: {user_profile.get('esg_prioritization', False)}")
         logger.info("=====================================")
         
-        # COMMENTED OUT: Original agent workflow
         # Initialize MainAgent with streaming
-        # main_agent = MainAgent()
-        # workflow = main_agent.create_workflow()
+        logger.info("REAL AGENT MODE: Using actual agent execution")
+        main_agent = MainAgent()
         
-        # DEMO: Using preset streaming data instead of actual agents
-        logger.info("DEMO MODE: Using preset data instead of agents")
+        # Create a queue to collect streaming events
+        import asyncio
+        event_queue = asyncio.Queue()
         
-        # Stream the workflow execution with delays to simulate processing
-        current_progress = 20
+        # Define progress callback that adds events to queue
+        async def progress_callback(event_type, data):
+            await event_queue.put((event_type, data))
         
-        # Risk Analysis Phase
-        current_progress = 30
-        yield create_sse_event("risk_analysis_started", {
-            "progress": current_progress,
-            "message": "Analyzing risk profile and generating risk blueprint..."
-        })
+        # Start the workflow in a separate task
+        async def run_workflow():
+            try:
+                result = main_agent.run_complete_workflow(user_profile_obj, progress_callback)
+                await event_queue.put(("workflow_complete", {"result": result}))
+            except Exception as e:
+                await event_queue.put(("workflow_error", {"error": str(e)}))
         
-        # Simulate processing time
-        await asyncio.sleep(1.5)
+        # Start workflow task
+        workflow_task = asyncio.create_task(run_workflow())
         
-        # Preset Risk Analysis Results - Based on test_assessment_data
-        # Annual Income: $75,000, Monthly Savings: $2,000, Total Debt: $25,000
-        # Time Horizon: 15 years, Risk Tolerance: medium, ESG: True
-        preset_risk_blueprint = {
-            "risk_capacity": {
-                "level": "moderate",
-                "score": 6.5,  # Conservative score: good savings but medium debt load
-                "factors": {
-                    "time_horizon": 15,  # From test_assessment_data
-                    "income_stability": "stable",
-                    "debt_ratio": 0.33,  # $25,000 debt / $75,000 income = 0.33
-                    "liquidity_position": "adequate",  # 6-12 months emergency fund
-                    "savings_capacity": 0.32  # $2,000 monthly / ($75,000/12) = 32% savings rate
-                }
-            },
-            "risk_tolerance": {
-                "level": "medium",  # Directly from test_assessment_data
-                "score": 5.0,  # Realistic medium risk = 5/10 scale (not aggressive)
-                "behavioral_factors": ["balanced_growth", "esg_conscious", "long_term_oriented"]
-            },
-            "volatility_target": 14.5,  # Realistic for medium risk tolerance  
-            "risk_score": 50,  # True medium risk = 50/100 (not 60)
-            "recommended_allocation": {
-                "equity": 0.70,  # Age-appropriate for 15-year horizon but conservative for medium risk
-                "fixed_income": 0.26,
-                "alternatives": 0.04
-            },
-            "esg_considerations": {
-                "esg_prioritization": True,  # From test_assessment_data
-                "avoid_industries": ["tobacco", "weapons"],  # From test data
-                "prefer_industries": ["technology", "renewable_energy"]  # From test data
-            }
-        }
-        
-        preset_financial_ratios = {
-            "debt_to_income": 0.33,  # $25,000 / $75,000 - calculated from test data
-            "savings_rate": 0.32,    # $2,000 / ($75,000/12) - calculated from test data  
-            "emergency_fund_ratio": 0.75,  # Realistic: building toward 6-12 months target
-            "investment_capacity": 24000,  # $2,000 * 12 months - calculated from test data
-            "annual_investment_potential": 18000,  # Conservative 75% of savings for investment (debt considerations)
-            "liquid_reserves_months": 8.5,  # Months of expenses covered by emergency fund
-            "disposable_income_ratio": 0.65  # After debt service and expenses: 65% available
-        }
-        
-        current_progress = 50
-        yield create_sse_event("risk_analysis_complete", {
-            "progress": current_progress,
-            "message": "Risk analysis completed successfully",
-            "risk_blueprint": preset_risk_blueprint,
-            "financial_ratios": preset_financial_ratios,
-            "risk_score": 65,
-            "volatility_target": 14.2
-        })
-        
-        await asyncio.sleep(1.0)
-        
-        # Portfolio Construction Phase
-        current_progress = 60
-        construction_message = "Optimizing portfolio allocation based on risk profile"
-        if specific_assets:
-            construction_message += f" and incorporating {len(specific_assets)} user-specified assets"
-        construction_message += "..."
-        
-        yield create_sse_event("portfolio_construction_started", {
-            "progress": current_progress,
-            "message": construction_message,
-            "user_specified_assets": specific_assets
-        })
-        
-        await asyncio.sleep(2.0)
-        
-        # Preset Portfolio Allocation Results - Optimized for test_assessment_data profile
-        # Medium risk, 15-year horizon, ESG focus, $24k annual investment capacity, includes individual stocks
-        preset_portfolio_allocation = {
-            "optimized_weights": {
-                # ETF Holdings (35%)
-                "VTI": 0.07,    # Total Stock Market - ESG screened
-                "VXUS": 0.07,   # International Stocks
-                "ESGV": 0.12,   # ESG-focused US equity (ESG priority from test data)
-                "BND": 0.25,    # Total Bond Market (higher allocation for medium risk)
-                "VTEB": 0.05,   # Tax-Exempt Bonds (tax efficiency for $75k income)
-                "VNQ": 0.02,    # Real Estate REIT
-                "ICLN": 0.03,   # Clean Energy ETF
-                # Individual Technology Stocks (23%)
-                "MSFT": 0.08,   # Microsoft - Cloud technology leader
-                "GOOGL": 0.06,  # Alphabet - Technology innovation
-                "AAPL": 0.05,   # Apple - Consumer technology
-                "NVDA": 0.04,   # NVIDIA - AI/semiconductor leader
-                # Individual Renewable Energy Stocks (9%)
-                "NEE": 0.04,    # NextEra Energy - Renewable energy leader
-                "TSLA": 0.03,   # Tesla - Electric vehicles/clean energy
-                "ENPH": 0.02,   # Enphase Energy - Solar technology
-                # Individual International Stocks (5%)
-                "ASML": 0.03,   # ASML - Semiconductor equipment
-                "TSM": 0.02,    # Taiwan Semi - Chip manufacturing
-                # Individual Real Estate Stock (2%)
-                "PLD": 0.02     # Prologis - Sustainable logistics real estate
-            },
-            "portfolio_metrics": {
-                "expected_return": 0.076,  # Realistic return for balanced ESG portfolio
-                "volatility": 0.145,      # Realistic volatility for 70/30 equity/bond mix
-                "sharpe_ratio": 0.52,     # Realistic risk-adjusted return
-                "max_drawdown": -0.32,    # Realistic maximum potential loss
-                "annual_fee": 0.12        # Weighted average expense ratio with individual stocks
-            },
-            "allocation_summary": {
-                "total_equity": 0.65,     # 65% equity for medium risk, 15-year horizon
-                "total_fixed_income": 0.30,  # 30% bonds for stability
-                "total_alternatives": 0.05,   # 5% REITs for diversification
-                "esg_allocation": 0.90,    # 90% ESG-screened investments (higher with individual stocks)
-                "domestic_allocation": 0.75,  # US market focus
-                "international_allocation": 0.25,
-                "individual_stocks": 0.39,   # 39% individual stock allocation
-                "etf_allocation": 0.61,      # 61% ETF allocation
-                "sectors": {
-                    "technology": 0.29,        # Higher tech allocation (MSFT, GOOGL, AAPL, NVDA + tech ETFs)
-                    "renewable_energy": 0.12,  # ESG theme from test data (TSLA, NEE, ENPH, ICLN)
-                    "real_estate": 0.04,       # VNQ + PLD
-                    "bonds": 0.30,             # BND + VTEB
-                    "international": 0.17,     # VXUS + ASML + TSM
-                    "broad_market": 0.08       # VTI + ESGV (non-sector specific)
-                },
-                "stock_selection_approach": {
-                    "individual_stock_criteria": ["ESG_leadership", "technology_innovation", "renewable_energy_focus"],
-                    "concentration_limits": "max_8%_per_individual_stock",
-                    "diversification_method": "sector_and_geographic_spread"
-                }
-            },
-            "investment_timeline": {
-                "initial_investment": 5000,   # Realistic starter amount for $75k income
-                "monthly_contribution": 1500,  # Conservative: 75% of monthly savings ($2000 * 0.75)  
-                "available_monthly_savings": 2000,  # From test_assessment_data
-                "projected_15_year_value": 485000,  # Realistic projection with 7.6% return
-                "conservative_projection": 420000,  # With 6.5% return scenario
-                "retirement_goal_progress": "slightly_behind_target"  # More realistic assessment
-            },
-            "rebalancing_frequency": "quarterly"
-        }
-        
-        current_progress = 75
-        yield create_sse_event("portfolio_construction_complete", {
-            "progress": current_progress,
-            "message": "Portfolio optimization completed successfully",
-            "portfolio_allocation": preset_portfolio_allocation
-        })
-        
-        await asyncio.sleep(1.0)
-        
-        # Selection Phase
-        current_progress = 80
-        selection_message = "Selecting specific securities and analyzing market conditions"
-        if specific_assets:
-            selection_message += f", prioritizing {len(specific_assets)} user-requested assets"
-        selection_message += "..."
-        
-        yield create_sse_event("selection_started", {
-            "progress": current_progress,
-            "message": selection_message,
-            "prioritizing_assets": specific_assets
-        })
-        
-        await asyncio.sleep(1.5)
-        
-        # Preset Security Selection Results - ESG-focused for test_assessment_data
-        preset_security_selections = {
-            "equity_selections": {
-                "large_cap_esg": [
-                    {"ticker": "ESGV", "name": "Vanguard ESG U.S. Stock ETF", "weight": 0.15, "rationale": "ESG-screened US equities avoiding tobacco/weapons"},
-                    {"ticker": "VTI", "name": "Vanguard Total Stock Market ETF", "weight": 0.10, "rationale": "Broad market exposure with ESG overlay"}
-                ],
-                "individual_technology_stocks": [
-                    {"ticker": "MSFT", "name": "Microsoft Corporation", "weight": 0.08, "rationale": "Leading cloud technology, strong ESG ratings, avoids controversial industries"},
-                    {"ticker": "GOOGL", "name": "Alphabet Inc Class A", "weight": 0.06, "rationale": "Technology innovation leader, renewable energy commitments"},
-                    {"ticker": "AAPL", "name": "Apple Inc", "weight": 0.05, "rationale": "Consumer technology leader with strong ESG initiatives"},
-                    {"ticker": "NVDA", "name": "NVIDIA Corporation", "weight": 0.04, "rationale": "AI/semiconductor leader, powers renewable energy solutions"}
-                ],
-                "renewable_energy_stocks": [
-                    {"ticker": "TSLA", "name": "Tesla Inc", "weight": 0.03, "rationale": "Electric vehicle and clean energy storage leader"},
-                    {"ticker": "NEE", "name": "NextEra Energy Inc", "weight": 0.04, "rationale": "Largest renewable energy generator in North America"},
-                    {"ticker": "ENPH", "name": "Enphase Energy Inc", "weight": 0.02, "rationale": "Solar energy technology and microinverter systems"},
-                    {"ticker": "ICLN", "name": "iShares Global Clean Energy ETF", "weight": 0.03, "rationale": "Diversified renewable energy exposure"}
-                ],
-                "international_esg": [
-                    {"ticker": "VXUS", "name": "Vanguard Total International Stock ETF", "weight": 0.10, "rationale": "Global diversification with ESG considerations"},
-                    {"ticker": "ASML", "name": "ASML Holding NV ADR", "weight": 0.03, "rationale": "Semiconductor equipment leader, critical for tech advancement"},
-                    {"ticker": "TSM", "name": "Taiwan Semiconductor Manufacturing ADR", "weight": 0.02, "rationale": "Leading chip manufacturer with clean technology focus"}
-                ],
-                "real_estate": [
-                    {"ticker": "VNQ", "name": "Vanguard Real Estate ETF", "weight": 0.03, "rationale": "Inflation hedge, excludes tobacco/weapons REITs"},
-                    {"ticker": "PLD", "name": "Prologis Inc", "weight": 0.02, "rationale": "Sustainable logistics real estate, solar installations"}
-                ]
-            },
-            "fixed_income_selections": {
-                "core_bonds": [
-                    {"ticker": "BND", "name": "Vanguard Total Bond Market ETF", "weight": 0.25, "rationale": "Stable income component for medium risk profile"}
-                ],
-                "tax_exempt": [
-                    {"ticker": "VTEB", "name": "Vanguard Tax-Exempt Bond ETF", "weight": 0.05, "rationale": "Tax efficiency for $75k income bracket"}
-                ]
-            },
-            "esg_screening_results": {
-                "excluded_companies": ["Philip Morris", "Lockheed Martin", "British American Tobacco", "Exxon Mobil", "Chevron"],
-                "included_companies": ["Microsoft", "Apple", "Tesla", "NextEra Energy", "Alphabet", "NVIDIA", "ASML", "Prologis"],
-                "included_themes": ["renewable_energy", "technology", "sustainable_infrastructure", "clean_transportation", "energy_efficiency"],
-                "esg_score_minimum": 7.0,
-                "carbon_intensity_limit": "50th percentile",
-                "screening_criteria": {
-                    "avoid_tobacco": True,
-                    "avoid_weapons": True,
-                    "prefer_renewable_energy": True,
-                    "prefer_technology": True,
-                    "minimum_esg_rating": "A-",
-                    "carbon_footprint_target": "net_zero_committed"
-                }
-            },
-            "selection_criteria": {
-                "expense_ratio_threshold": 0.25,  # Allow slightly higher for ESG funds
-                "minimum_aum": 500000000,         # $500M minimum
-                "esg_screening": True,            # From test_assessment_data
-                "liquidity_requirements": "daily",
-                "avoid_industries": ["tobacco", "weapons"],  # From test data
-                "prefer_industries": ["technology", "renewable_energy"],  # From test data
-                "tax_efficiency": True  # Important for $75k income level
-            }
-        }
-        
-        current_progress = 90
-        yield create_sse_event("selection_complete", {
-            "progress": current_progress,
-            "message": "Security selection completed successfully",
-            "security_selections": preset_security_selections
-        })
-        
-        await asyncio.sleep(1.0)
-        
-        # Communication Phase - Final Report Generation
-        current_progress = 95
-        yield create_sse_event("communication_started", {
-            "progress": current_progress,
-            "message": "Generating comprehensive investment report..."
-        })
-        
-        await asyncio.sleep(2.0)
-        
-        # Preset Final Report - Tailored to test_assessment_data profile
-        preset_final_report = {
-            "executive_summary": {
-                "recommendation": "ESG-Focused Balanced Growth Portfolio",
-                "target_allocation": "70% Equity, 26% Bonds, 4% Alternatives",
-                "expected_annual_return": "7.6%",
-                "risk_level": "Medium",
-                "time_horizon": "15 years",
-                "client_profile": "Mid-career investor with moderate debt load and strong savings discipline"
-            },
-            "goal_analysis": {
-                "primary_goals": [
-                    {
-                        "goal": "Retirement Planning",
-                        "priority": 1,
-                        "projected_outcome": "Moderately on track - $485,000 projected at 15-year mark",
-                        "strategy": "Increase contribution rate as income grows, prioritize tax-advantaged accounts"
-                    },
-                    {
-                        "goal": "Buy a Home",
-                        "priority": 2,
-                        "projected_outcome": "Achievable in 4-6 years with dedicated saving plan",
-                        "strategy": "Allocate $500/month to separate high-yield savings for down payment"
-                    }
-                ]
-            },
-            "portfolio_details": {
-                "total_savings_capacity": 24000,     # $2,000 * 12 months - from test_assessment_data
-                "recommended_investment": 18000,     # 75% of savings allocated to investment
-                "monthly_investment": 1500,          # Conservative allocation considering debt
-                "projected_15_year_value": 485000,   # Realistic with 7.6% returns
-                "current_debt_management": {
-                    "total_debt": 25000,             # From test_assessment_data
-                    "debt_to_income_ratio": "33%",   # $25k / $75k - calculated from test data
-                    "recommendation": "Consider debt reduction alongside investing for optimal balance"
-                },
-                "emergency_fund_status": "Building toward 6-12 months target", # More realistic
-                "rebalancing_schedule": "Quarterly",
-                "tax_considerations": {
-                    "income_bracket": "22% federal tax bracket ($75k income)",
-                    "strategy": "Maximize 401(k) to $23,000, Roth IRA to $7,000",
-                    "tax_loss_harvesting": "Implement in taxable accounts",
-                    "asset_location": "Bonds in 401(k), growth stocks in Roth IRA"
-                }
-            },
-            "esg_implementation": {
-                "esg_allocation": "85% of portfolio ESG-screened",
-                "exclusions_applied": ["tobacco", "weapons"],  # From test data
-                "thematic_investments": ["technology", "renewable_energy"],  # From test data
-                "impact_metrics": {
-                    "carbon_footprint_reduction": "40% vs benchmark",
-                    "esg_score": "8.2/10 portfolio average"
-                }
-            },
-            "risk_analysis": {
-                "risk_capacity": preset_risk_blueprint["risk_capacity"],
-                "risk_tolerance": preset_risk_blueprint["risk_tolerance"],
-                "stress_test_results": {
-                    "2008_crisis_scenario": "-25.8%",  # Better due to lower equity allocation
-                    "2020_pandemic_scenario": "-18.5%",
-                    "inflation_scenario": "+12.3%",    # Good inflation protection
-                    "recovery_time": "15-20 months typical for medium risk portfolio"
-                }
-            },
-            "implementation_plan": {
-                "immediate_actions": [
-                    "Open Roth IRA if not already available",
-                    "Increase 401(k) contribution to maximize employer match",
-                    "Set up automatic $2,000 monthly investment"
-                ],
-                "phase_1_months_1_3": "Implement core ETF positions (VTI, BND, ESGV)",
-                "phase_2_months_4_6": "Add international and thematic ESG positions",
-                "phase_3_months_7_12": "Optimize tax efficiency and rebalancing procedures",
-                "ongoing_monitoring": "Quarterly rebalancing, annual goal review"
-            },
-            "fees_and_costs": {
-                "weighted_expense_ratio": "0.12%",  # Slightly higher due to ESG funds
-                "estimated_annual_fees": "$288 on $240,000 portfolio (year 10)",
-                "trading_costs": "Zero commission ETF trades",
-                "total_cost_impact": "Low-cost approach saves ~$15,000 over 15 years vs active funds"
-            },
-            "performance_projections": {
-                "conservative_scenario": "$420,000 (6.5% return)",
-                "expected_scenario": "$485,000 (7.6% return)", 
-                "optimistic_scenario": "$565,000 (9.0% return)",
-                "probability_of_success": "65% chance of meeting long-term financial goals"
-            },
-            "next_steps": [
-                "Review ESG screening criteria and approve selected individual stocks",
-                "Set up automatic investment plan for $1,500/month",
-                "Consider debt reduction strategy to accelerate investment capacity",
-                "Establish dedicated home down payment savings of $500/month",
-                "Book quarterly portfolio review for Q1 2026"
-            ],
-            "disclaimers": [
-                "This analysis is based on test assessment data demonstrating realistic scenarios",
-                "Projections assume $1,500 monthly investments (75% of available savings)",
-                "Individual stock selections add risk but potential for higher returns",
-                "ESG constraints may limit diversification in certain sectors", 
-                "Debt-to-income ratio of 33% considered in conservative projections",
-                "Please consult with a financial advisor for personalized advice"
-            ]
-        }
-        
-        current_progress = 100
-        yield create_sse_event("final_report_complete", {
-            "progress": current_progress,
-            "message": "Investment report generated successfully!",
-            "final_report": preset_final_report,
-            "execution_time": 8.5,
-            "status": "complete"
-        })
-        
-        # COMMENTED OUT: Original agent execution
-        # try:
-        #     # Run the complete workflow (we'll enhance this later for true streaming)
-        #     agent_result = await run_main_agent_safely(user_profile_obj)
-        #     
-        #     if agent_result["success"]:
-        #         workflow_result = agent_result["result"]
-        #         ... (original code)
-        #     else:
-        #         ... (error handling)
-        # except Exception as workflow_error:
-        #     ... (error handling)
+        # Stream events as they come
+        while True:
+            try:
+                # Wait for next event with timeout
+                event_type, data = await asyncio.wait_for(event_queue.get(), timeout=30.0)
+                
+                if event_type == "workflow_complete":
+                    # Workflow finished successfully
+                    result = data["result"]
+                    yield create_sse_event("workflow_complete", {
+                        "progress": 100,
+                        "message": "Workflow completed successfully",
+                        "result": result
+                    })
+                    break
+                elif event_type == "workflow_error":
+                    # Workflow failed
+                    yield create_sse_event("workflow_error", {
+                        "message": f"Workflow failed: {data['error']}",
+                        "type": "workflow_error"
+                    })
+                    break
+                else:
+                    # Regular progress event
+                    yield create_sse_event(event_type, data)
+                    
+            except asyncio.TimeoutError:
+                # No event received within timeout, check if workflow is still running
+                if workflow_task.done():
+                    # Workflow finished but no completion event was sent
+                    try:
+                        result = workflow_task.result()
+                        yield create_sse_event("workflow_complete", {
+                            "progress": 100,
+                            "message": "Workflow completed successfully",
+                            "result": result
+                        })
+                    except Exception as e:
+                        yield create_sse_event("workflow_error", {
+                            "message": f"Workflow failed: {str(e)}",
+                            "type": "workflow_error"
+                        })
+                    break
+                else:
+                    # Still running, send keepalive
+                    yield create_sse_event("keepalive", {
+                        "message": "Workflow in progress...",
+                        "progress": 50
+                    })
         
     except Exception as e:
         logger.error(f"Stream workflow error: {str(e)}")
@@ -1250,8 +1115,11 @@ async def get_portfolio():
 @app.post("/api/news-insights")
 async def get_news_insights_endpoint(request_data: Dict[str, Any]):
     """
-    Get AI news insights for a stock symbol
-    Returns price data, news articles, and market summary
+    Get AI news insights for a stock symbol using enhanced market analysis
+    Returns comprehensive analysis including:
+    - Stock metrics (price, volatility, PE ratio, etc.)
+    - News from multiple sources (Yahoo, Finnhub, Alpha Vantage)
+    - AI-powered market sentiment analysis
     """
     symbol = request_data.get("symbol")
     
@@ -1259,27 +1127,41 @@ async def get_news_insights_endpoint(request_data: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Symbol is required")
     
     try:
-        logger.info(f"🔄 Getting news insights for {symbol}")
+        logger.info(f"🔄 Getting enhanced market analysis for {symbol}")
         
-        # Get complete analysis
-        analysis_data = get_news_insights_analysis(symbol)
+        # Get comprehensive analysis from enhanced_market_analysis
+        analysis_data = await get_enhanced_market_analysis(symbol)
         
-        logger.info(f"✅ News insights complete for {symbol}")
+        # Transform to match frontend expected format
+        transformed_data = {
+            "symbol": symbol,
+            "priceData": {
+                "price": analysis_data.get('stock_metrics', {}).get('current_price', 0),
+                "change": analysis_data.get('stock_metrics', {}).get('price_change', 0),
+                "changePercent": analysis_data.get('stock_metrics', {}).get('price_change_percent', 0)
+            },
+            "newsArticles": analysis_data.get('related_news', []),
+            "newsUrls": [article.get('url', '') for article in analysis_data.get('related_news', [])],
+            "marketSummary": analysis_data.get('ai_analysis', {}).get('market_sentiment', 'Analysis unavailable'),
+            "timestamp": analysis_data.get('timestamp', datetime.now().isoformat()),
+            "stockMetrics": analysis_data.get('stock_metrics', {}),
+            "keyInsights": analysis_data.get('ai_analysis', {}).get('key_insights', '')
+        }
+        
+        logger.info(f"✅ Enhanced market analysis complete for {symbol}")
         
         return {
             "status": "success",
-            "data": analysis_data,
+            "data": transformed_data,
             "timestamp": datetime.now().isoformat()
         }
         
     except Exception as e:
-        logger.error(f"Error getting news insights for {symbol}: {str(e)}")
+        logger.error(f"Error getting enhanced market analysis for {symbol}: {str(e)}")
         return {
             "status": "error",
             "symbol": symbol,
             "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
             "timestamp": datetime.now().isoformat()
         }
 

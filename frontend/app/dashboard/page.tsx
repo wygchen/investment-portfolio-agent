@@ -59,16 +59,36 @@ const GOAL_OPTIONS = [
 
 export default function DashboardPage() {
   const [selectedTab, setSelectedTab] = useState("overview")
-  const [userProfile, setUserProfile] = useState<any>(null)
-  const portfolioValue = 487650
-  const changeAmount = 23450
-  const changePercentage = 5.06
+  const [portfolioData, setPortfolioData] = useState<any>(null)
+  const [reportData, setReportData] = useState<any>(null)
+  const [fullResult, setFullResult] = useState<any>(null)
+  
+  // Default values
+  const portfolioValue = portfolioData?.totalValue || 100000
+  const changeAmount = 0
+  const changePercentage = 0
 
-  // Load user profile from localStorage
+  // Load portfolio data from localStorage
   useEffect(() => {
-    const savedProfile = localStorage.getItem('investmentProfile')
-    if (savedProfile) {
-      setUserProfile(JSON.parse(savedProfile))
+    if (typeof window !== 'undefined') {
+      const savedPortfolio = localStorage.getItem('portfolioai_portfolio')
+      const savedReport = localStorage.getItem('portfolioai_report')
+      const savedFullResult = localStorage.getItem('portfolioai_full_result')
+      
+      if (savedPortfolio) {
+        console.log('📊 Loading portfolio data...')
+        setPortfolioData(JSON.parse(savedPortfolio))
+      }
+      
+      if (savedReport) {
+        console.log('📄 Loading report data...')
+        setReportData(JSON.parse(savedReport))
+      }
+      
+      if (savedFullResult) {
+        console.log('🔍 Loading full result data...')
+        setFullResult(JSON.parse(savedFullResult))
+      }
     }
   }, [])
 
@@ -171,12 +191,16 @@ export default function DashboardPage() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-muted-foreground">Today's Change</p>
+                    <p className="text-sm text-muted-foreground">Expected Return</p>
                     <div className="flex items-center space-x-1">
-                      <span className="text-2xl font-bold text-chart-4">+$1250</span>
+                      <span className="text-2xl font-bold text-chart-4">
+                        {reportData?.expected_return 
+                          ? `${Number(reportData.expected_return).toFixed(2)}%` 
+                          : 'N/A'}
+                      </span>
                       <TrendingUp className="w-4 h-4 text-chart-4" />
                     </div>
-                    <p className="text-sm text-chart-4">+0.26%</p>
+                    <p className="text-sm text-chart-4">Annual</p>
                   </div>
                   <div className="w-12 h-12 bg-chart-4/10 rounded-lg flex items-center justify-center">
                     <DollarSign className="w-6 h-6 text-chart-4" />
@@ -190,8 +214,18 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">Risk Score</p>
-                    <div className="text-2xl font-bold text-foreground">6.8/10</div>
-                    <p className="text-sm text-muted-foreground">Moderate Risk</p>
+                    <div className="text-2xl font-bold text-foreground">
+                      {reportData?.risk_score 
+                        ? `${Number(reportData.risk_score).toFixed(1)}/100` 
+                        : 'N/A'}
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {reportData?.risk_score 
+                        ? Number(reportData.risk_score) < 40 ? 'Low Risk' 
+                          : Number(reportData.risk_score) < 70 ? 'Moderate Risk' 
+                          : 'High Risk'
+                        : 'Unknown'}
+                    </p>
                   </div>
                   <div className="w-12 h-12 bg-chart-2/10 rounded-lg flex items-center justify-center">
                     <Shield className="w-6 h-6 text-chart-2" />
@@ -205,8 +239,18 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">Sharpe Ratio</p>
-                    <div className="text-2xl font-bold text-foreground">1.42</div>
-                    <p className="text-sm text-chart-4">Excellent</p>
+                    <div className="text-2xl font-bold text-foreground">
+                      {reportData?.sharpe_ratio 
+                        ? Number(reportData.sharpe_ratio).toFixed(2) 
+                        : 'N/A'}
+                    </div>
+                    <p className="text-sm text-chart-4">
+                      {reportData?.sharpe_ratio 
+                        ? Number(reportData.sharpe_ratio) > 2 ? 'Excellent' 
+                          : Number(reportData.sharpe_ratio) > 1 ? 'Good' 
+                          : 'Fair'
+                        : 'Unknown'}
+                    </p>
                   </div>
                   <div className="w-12 h-12 bg-accent/10 rounded-lg flex items-center justify-center">
                     <BarChart3 className="w-6 h-6 text-accent" />
@@ -220,8 +264,12 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">Volatility</p>
-                    <div className="text-2xl font-bold text-foreground">12.3%</div>
-                    <p className="text-sm text-muted-foreground">12M Average</p>
+                    <div className="text-2xl font-bold text-foreground">
+                      {reportData?.volatility 
+                        ? `${Number(reportData.volatility).toFixed(1)}%` 
+                        : 'N/A'}
+                    </div>
+                    <p className="text-sm text-muted-foreground">Annual</p>
                   </div>
                   <div className="w-12 h-12 bg-chart-5/10 rounded-lg flex items-center justify-center">
                     <Activity className="w-6 h-6 text-chart-5" />
@@ -250,7 +298,7 @@ export default function DashboardPage() {
 
           <TabsContent value="overview" className="space-y-6">
             {/* User Goals Section */}
-            {userProfile?.goals && userProfile.goals.length > 0 && (
+            {fullResult?.profile?.goals && fullResult.profile.goals.length > 0 && (
               <Card className="border-0 shadow-lg">
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
@@ -260,13 +308,13 @@ export default function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {userProfile.goals.slice(0, 6).map((goal: any, index: number) => {
-                      const goalOption = GOAL_OPTIONS.find(opt => opt.id === goal.id)
+                    {fullResult.profile.goals.slice(0, 6).map((goal: any, index: number) => {
+                      const goalOption = GOAL_OPTIONS.find(opt => opt.id === goal.goal_type)
                       if (!goalOption) return null
                       const Icon = goalOption.icon
                       return (
                         <div
-                          key={goal.id}
+                          key={goal.goal_type || index}
                           className="flex items-center gap-3 p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
                         >
                           <div className="flex-shrink-0 w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
@@ -358,68 +406,53 @@ export default function DashboardPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid lg:grid-cols-2 gap-6">
-                  <ResponsiveContainer width="100%" height={250}>
-                    <RechartsPieChart>
-                      <Pie
-                        data={[
-                          { name: "US Equities", value: 35, amount: 170577, color: "#F59E0B" },
-                          { name: "International Equities", value: 25, amount: 121912, color: "#3B82F6" },
-                          { name: "Bonds", value: 20, amount: 97530, color: "#10B981" },
-                          { name: "REITs", value: 10, amount: 48765, color: "#8B5CF6" },
-                          { name: "Commodities", value: 7, amount: 34135, color: "#EF4444" },
-                          { name: "Crypto", value: 3, amount: 14625, color: "#F97316" },
-                        ]}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60} s
-                        outerRadius={100}
-                        paddingAngle={2}
-                        dataKey="value"
-                      >
-                        {[
-                          { name: "US Equities", value: 35, amount: 170577, color: "#F59E0B" },
-                          { name: "International Equities", value: 25, amount: 121912, color: "#3B82F6" },
-                          { name: "Bonds", value: 20, amount: 97530, color: "#10B981" },
-                          { name: "REITs", value: 10, amount: 48765, color: "#8B5CF6" },
-                          { name: "Commodities", value: 7, amount: 34135, color: "#EF4444" },
-                          { name: "Crypto", value: 3, amount: 14625, color: "#F97316" },
-                        ].map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        formatter={(value: any) => [`${value}%`, "Allocation"]}
-                        contentStyle={{
-                          backgroundColor: "hsl(var(--card))",
-                          border: "1px solid hsl(var(--border))",
-                          borderRadius: "8px",
-                        }}
-                      />
-                    </RechartsPieChart>
-                  </ResponsiveContainer>
-                  <div className="space-y-3">
-                    {[
-                      { name: "US Equities", value: 35, amount: 170577, color: "#F59E0B" },
-                      { name: "International Equities", value: 25, amount: 121912, color: "#3B82F6" },
-                      { name: "Bonds", value: 20, amount: 97530, color: "#10B981" },
-                      { name: "REITs", value: 10, amount: 48765, color: "#8B5CF6" },
-                      { name: "Commodities", value: 7, amount: 34135, color: "#EF4444" },
-                      { name: "Crypto", value: 3, amount: 14625, color: "#F97316" },
-                    ].map((item) => (
-                      <div key={item.name} className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-                          <span className="text-sm">{item.name}</span>
+                {portfolioData?.allocation && portfolioData.allocation.length > 0 ? (
+                  <div className="grid lg:grid-cols-2 gap-6">
+                    <ResponsiveContainer width="100%" height={250}>
+                      <RechartsPieChart>
+                        <Pie
+                          data={portfolioData.allocation}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60} 
+                          outerRadius={100}
+                          paddingAngle={2}
+                          dataKey="percentage"
+                        >
+                          {portfolioData.allocation.map((entry: any, index: number) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          formatter={(value: any) => [`${value}%`, "Allocation"]}
+                          contentStyle={{
+                            backgroundColor: "hsl(var(--card))",
+                            border: "1px solid hsl(var(--border))",
+                            borderRadius: "8px",
+                          }}
+                        />
+                      </RechartsPieChart>
+                    </ResponsiveContainer>
+                    <div className="space-y-3">
+                      {portfolioData.allocation.map((item: any) => (
+                        <div key={item.name} className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                            <span className="text-sm font-medium">{item.name}</span>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm font-semibold">{item.percentage}%</div>
+                            <div className="text-xs text-muted-foreground">
+                              ${((portfolioValue * item.percentage) / 100).toLocaleString(undefined, {maximumFractionDigits: 0})}
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <div className="font-medium text-sm">{item.value}%</div>
-                          <div className="text-xs text-muted-foreground">${item.amount.toLocaleString()}</div>
-                        </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <p className="text-muted-foreground">No portfolio data available. Please generate a portfolio first.</p>
+                )}
               </CardContent>
             </Card>
 
@@ -462,67 +495,69 @@ export default function DashboardPage() {
             <div className="grid lg:grid-cols-2 gap-6">
               <Card className="border-0 shadow-lg">
                 <CardHeader>
-                  <CardTitle>Current vs Target Allocation</CardTitle>
+                  <CardTitle>Asset Class Allocation</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-4">
-                    {[
-                      { name: "US Equities", current: 35, target: 33 },
-                      { name: "International Equities", current: 25, target: 27 },
-                      { name: "Bonds", current: 20, target: 22 },
-                      { name: "REITs", current: 10, target: 9 },
-                      { name: "Commodities", current: 7, target: 6 },
-                      { name: "Crypto", current: 3, target: 3 },
-                    ].map((item) => (
-                      <div key={item.name} className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span>{item.name}</span>
-                          <span>
-                            {item.current}% / {item.target}%
-                          </span>
-                        </div>
-                        <div className="flex space-x-2">
-                          <Progress value={item.current} className="flex-1" />
-                          <Progress value={item.target} className="flex-1 opacity-50" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  {reportData?.asset_class_allocations ? (
+                    <div className="space-y-4">
+                      {Object.entries(reportData.asset_class_allocations).map(([assetClass, percentage]: [string, any]) => {
+                        const percent = typeof percentage === 'number' ? percentage * 100 : 0
+                        if (percent === 0) return null
+                        
+                        // Format asset class name
+                        const formattedName = assetClass
+                          .split('_')
+                          .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                          .join(' ')
+                        
+                        return (
+                          <div key={assetClass} className="space-y-2">
+                            <div className="flex justify-between text-sm">
+                              <span>{formattedName}</span>
+                              <span>{percent.toFixed(1)}%</span>
+                            </div>
+                            <Progress value={percent} className="flex-1" />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground">No allocation data available</p>
+                  )}
                 </CardContent>
               </Card>
 
               <Card className="border-0 shadow-lg">
                 <CardHeader>
-                  <CardTitle>Holdings Breakdown</CardTitle>
+                  <CardTitle>Individual Holdings</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-3">
-                    {[
-                      { name: "US Equities", value: 35, amount: 170577, change: "+2.3%" },
-                      { name: "International Equities", value: 25, amount: 121912, change: "+1.8%" },
-                      { name: "Bonds", value: 20, amount: 97530, change: "+0.5%" },
-                      { name: "REITs", value: 10, amount: 48765, change: "+3.1%" },
-                      { name: "Commodities", value: 7, amount: 34135, change: "-0.8%" },
-                      { name: "Crypto", value: 3, amount: 14625, change: "+5.2%" },
-                    ].map((item) => (
-                      <div key={item.name} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
-                        <div className="flex items-center space-x-3">
-                          <div>
-                            <div className="font-medium">{item.name}</div>
-                            <div className="text-sm text-muted-foreground">{item.value}% allocation</div>
+                  {reportData?.individual_holdings ? (
+                    <div className="space-y-3">
+                      {Object.entries(reportData.individual_holdings).map(([ticker, weight]: [string, any]) => {
+                        const percentage = typeof weight === 'number' ? weight * 100 : 0
+                        if (percentage === 0) return null
+                        
+                        const amount = (portfolioValue * percentage) / 100
+                        
+                        return (
+                          <div key={ticker} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                            <div className="flex items-center space-x-3">
+                              <div>
+                                <div className="font-medium">{ticker}</div>
+                                <div className="text-sm text-muted-foreground">{percentage.toFixed(2)}% allocation</div>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-medium">${amount.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                            </div>
                           </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-medium">${item.amount.toLocaleString()}</div>
-                          <div
-                            className={`text-sm ${item.change.startsWith("+") ? "text-chart-4" : "text-destructive"}`}
-                          >
-                            {item.change}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground">No holdings data available</p>
+                  )}
                 </CardContent>
               </Card>
             </div>

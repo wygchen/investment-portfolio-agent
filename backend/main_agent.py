@@ -13,7 +13,7 @@ Workflow:
 
 Configuration:
 - Uses environment variables for WatsonX API credentials (via watsonx_utils.py)
-- Required .env variables: WATSONX_APIKEY, WATSONX_URL, PROJ_ID
+- Required .env variables: WATSONX_APIKEY, WATSONX_URL, WATSONX_PROJECT_ID
 - See watsonx_utils.py for proper credential configuration
 """
 
@@ -21,6 +21,7 @@ import os
 import asyncio
 import time
 import logging
+import numpy as np
 from datetime import datetime
 from typing import Dict, List, Any, Optional, TypedDict
 
@@ -236,7 +237,7 @@ class MainAgent:
         # Add edges to define the sequential flow
         workflow.add_edge(START, "risk_analysis")
         workflow.add_edge("risk_analysis", "selection")
-        workflow.add_edge( "selection", "portfolio_construction")
+        workflow.add_edge("selection", "portfolio_construction")
         workflow.add_edge("portfolio_construction", "communication")
         workflow.add_edge("communication", END)
         
@@ -267,6 +268,14 @@ class MainAgent:
         try:
             state["current_node"] = "risk_analysis"
             
+            # Emit progress callback if available
+            progress_callback = state.get("progress_callback")
+            if progress_callback:
+                await progress_callback("risk_analysis_started", {
+                    "progress": 30,
+                    "message": "Analyzing risk profile and generating risk blueprint..."
+                })
+            
             # Check prerequisites
             if not state.get("user_profile"):
                 raise ValueError("User profile not available from discovery node")
@@ -291,12 +300,24 @@ class MainAgent:
             # Run Risk Analytics Agent
             risk_result = await self.risk_analytics_agent.process(agent_context)
             
+            logger.info(f"DEBUG: Risk result success: {risk_result.success}")
+            logger.info(f"DEBUG: Risk result error: {risk_result.error}")
+            logger.info(f"DEBUG: Risk result content: {risk_result.content}")
+            logger.info(f"DEBUG: Risk result structured_data: {risk_result.structured_data}")
+            
             if not risk_result.success:
                 raise Exception(f"Risk analysis failed: {risk_result.error or risk_result.content}")
             
             # Extract risk blueprint and analysis
             risk_data = risk_result.structured_data or {}
             risk_blueprint = risk_data.get("risk_blueprint", {})
+            
+            logger.info(f"DEBUG: Extracted risk_data: {risk_data}")
+            logger.info(f"DEBUG: Extracted risk_blueprint: {risk_blueprint}")
+            
+            # Validate that risk blueprint was created
+            if not risk_blueprint:
+                raise ValueError("Risk blueprint is empty - risk analytics agent did not generate proper blueprint")
             
             # Update state
             state["risk_analysis_state"] = {
@@ -309,24 +330,35 @@ class MainAgent:
             }
             state["risk_blueprint"] = risk_blueprint
             
-            logger.info("✅ Risk analysis completed successfully")
+            logger.info("SUCCESS: Risk analysis completed successfully")
             logger.info(f"Risk score: {risk_data.get('risk_score', 'N/A')}")
             logger.info(f"Volatility target: {risk_data.get('volatility_target', 'N/A')}%")
             if risk_blueprint and risk_blueprint.get('risk_capacity'):
                 logger.info(f"Risk capacity: {risk_blueprint.get('risk_capacity', {}).get('level', 'N/A')}")
             
+            # Emit completion callback if available
+            if progress_callback:
+                await progress_callback("risk_analysis_complete", {
+                    "progress": 50,
+                    "message": "Risk analysis completed successfully",
+                    "risk_blueprint": risk_blueprint,
+                    "financial_ratios": risk_data.get("financial_ratios", {}),
+                    "risk_score": risk_data.get("risk_score", 50),
+                    "volatility_target": risk_data.get("volatility_target", 12.0)
+                })
+            
             return state
             
         except Exception as e:
-            logger.error(f"❌ Risk analysis node failed: {str(e)}")
+            logger.error(f"ERROR: Risk analysis node failed: {str(e)}")
             state["success"] = False
             state["error"] = f"Risk analysis node failed: {str(e)}"
             state["node_errors"]["risk_analysis"] = str(e)
             return state
 
-    def portfolio_construction_node(self, state: MainAgentState) -> MainAgentState:
+    async def portfolio_construction_node(self, state: MainAgentState) -> MainAgentState:
         """
-        Node 4: Portfolio Construction - Optimize portfolio allocation for selected tickers
+        Node 3: Portfolio Construction - Optimize portfolio allocation for selected tickers
         
         Args:
             state: Current workflow state with risk blueprint and security selections
@@ -338,8 +370,19 @@ class MainAgent:
         logger.info("NODE 4: PORTFOLIO CONSTRUCTION")
         logger.info("="*60)
         
+        # Initialize all_tickers at function scope for exception handlers
+        all_tickers = []
+        
         try:
             state["current_node"] = "portfolio_construction"
+            
+            # Emit progress callback if available
+            progress_callback = state.get("progress_callback")
+            if progress_callback:
+                await progress_callback("portfolio_construction_started", {
+                    "progress": 80,
+                    "message": "Optimizing portfolio allocation based on risk profile..."
+                })
             
             # Check prerequisites
             risk_blueprint = state.get("risk_blueprint")
@@ -354,7 +397,6 @@ class MainAgent:
             logger.info("Starting portfolio optimization with selected tickers...")
             
             # Extract all tickers from security selections
-            all_tickers = []
             asset_class_tickers = {}
             
             for asset_class, selection_data in security_selections.items():
@@ -396,7 +438,9 @@ class MainAgent:
                     run_optimization_with_tickers,
                     expected_return,
                     standard_deviation,
-                    sharpe_ratio
+                    sharpe_ratio,
+                    log_returns,  # Import log_returns global variable
+                    adj_close_df  # Import price data
                 )
                 
                 # Run optimization with selected tickers
@@ -428,21 +472,48 @@ class MainAgent:
                 filtered_tickers = [all_tickers[i] for i in range(len(all_tickers)) if optimal_weights[i] > threshold]
                 filtered_weights = [optimal_weights[i] for i in range(len(all_tickers)) if optimal_weights[i] > threshold]
                 
-                # Create portfolio allocation result
+                # Calculate ACTUAL portfolio metrics using the functions
+                try:
+                    weights_array = np.array(filtered_weights)
+                    filtered_log_returns = log_returns[filtered_tickers]
+                    
+                    # Get sentiment scores for filtered tickers
+                    from portfolio_construction_and_market_sentiment.market_sentiment import analyze_market_sentiment
+                    sentiment_results = analyze_market_sentiment(filtered_tickers)
+                    ticker_sentiment = np.array([r.get('avg_score', 0.0) if isinstance(r, dict) else 0.0 for r in sentiment_results], dtype=float)
+                    
+                    # Calculate actual metrics
+                    portfolio_return = expected_return(weights_array, filtered_log_returns, ticker_sentiment)
+                    portfolio_volatility = standard_deviation(weights_array, cov_matrix)
+                    portfolio_sharpe = sharpe_ratio(weights_array, filtered_log_returns, cov_matrix, ticker_sentiment)
+                    
+                    logger.info(f"Calculated portfolio metrics: Return={portfolio_return:.4f}, Vol={portfolio_volatility:.4f}, Sharpe={portfolio_sharpe:.4f}")
+                except Exception as metric_error:
+                    logger.warning(f"Could not calculate metrics, using defaults: {metric_error}")
+                    # Keep the default values assigned earlier
+                
+                # Calculate asset class allocations
+                asset_class_allocations = {}
+                for ticker, weight in zip(filtered_tickers, filtered_weights):
+                    asset_class = self._map_ticker_to_asset_class(ticker)
+                    asset_class_allocations[asset_class] = asset_class_allocations.get(asset_class, 0) + weight
+                
+                # Create portfolio allocation result matching main.py expectations
                 portfolio_allocation = {
-                    "filtered_tickers": {ticker: self._map_ticker_to_asset_class(ticker) for ticker in filtered_tickers},
-                    "filtered_weights": {ticker: weight for ticker, weight in zip(filtered_tickers, filtered_weights)},
-                    "portfolio_metrics": {
-                        "expected_return": portfolio_return,
-                        "volatility": portfolio_volatility,
-                        "sharpe_ratio": portfolio_sharpe,
-                        "total_tickers": len(filtered_tickers)
-                    },
-                    "optimization_config": {
-                        "method": optimization_method,
-                        "covariance_method": covariance_method,
-                        "risk_tolerance": user_risk_tolerance
-                    }
+                    # Keys that main.py expects
+                    "tickers": filtered_tickers,
+                    "weights": filtered_weights,
+                    "weights_map": {ticker: weight for ticker, weight in zip(filtered_tickers, filtered_weights)},
+                    "expected_return": portfolio_return,
+                    "volatility": portfolio_volatility,
+                    "sharpe_ratio": portfolio_sharpe,
+                    "asset_class_allocations": asset_class_allocations,
+                    
+                    # Additional metadata
+                    "total_tickers": len(filtered_tickers),
+                    "optimization_method": optimization_method,
+                    "covariance_method": covariance_method,
+                    "risk_tolerance": user_risk_tolerance
                 }
                 
                 # Update state
@@ -454,26 +525,36 @@ class MainAgent:
                 }
                 state["portfolio_allocation"] = portfolio_allocation
                 
-                logger.info("✅ Portfolio construction completed successfully")
+                logger.info("SUCCESS: Portfolio construction completed successfully")
                 logger.info(f"Final portfolio: {len(filtered_tickers)} assets")
                 logger.info(f"Expected return: {portfolio_return:.2%}")
                 logger.info(f"Volatility: {portfolio_volatility:.2%}")
                 logger.info(f"Sharpe ratio: {portfolio_sharpe:.2f}")
                 
+                # Emit completion callback if available
+                if progress_callback:
+                    await progress_callback("portfolio_construction_complete", {
+                        "progress": 90,
+                        "message": "Portfolio optimization completed successfully",
+                        "portfolio_allocation": portfolio_allocation
+                    })
+                
                 return state
                 
             except ImportError as e:
                 logger.error(f"Failed to import portfolio construction module: {e}")
-                # Create a simple fallback allocation
+                # Create a simple fallback allocation matching expected format
+                equal_weight = 1.0 / len(all_tickers)
                 fallback_allocation = {
-                    "filtered_tickers": {ticker: "equity" for ticker in all_tickers},
-                    "filtered_weights": {ticker: 1.0/len(all_tickers) for ticker in all_tickers},
-                    "portfolio_metrics": {
-                        "expected_return": 0.08,
-                        "volatility": 0.12,
-                        "sharpe_ratio": 1.0,
-                        "total_tickers": len(all_tickers)
-                    }
+                    "tickers": all_tickers,
+                    "weights": [equal_weight] * len(all_tickers),
+                    "weights_map": {ticker: equal_weight for ticker in all_tickers},
+                    "expected_return": 0.08,
+                    "volatility": 0.12,
+                    "sharpe_ratio": 1.0,
+                    "asset_class_allocations": {},
+                    "total_tickers": len(all_tickers),
+                    "optimization_method": "equal_weight_fallback"
                 }
                 
                 state["portfolio_construction_state"] = {
@@ -484,22 +565,29 @@ class MainAgent:
                 }
                 state["portfolio_allocation"] = fallback_allocation
                 
-                logger.info("✅ Portfolio construction completed with equal weight fallback")
+                logger.info("SUCCESS: Portfolio construction completed with equal weight fallback")
                 return state
                 
         except Exception as e:
-            logger.error(f"❌ Portfolio construction failed: {str(e)}")
+            logger.error(f"ERROR: Portfolio construction failed: {str(e)}")
             
-            # Create fallback allocation with all tickers
+            # Use all_tickers if available, otherwise use default ticker
+            if not all_tickers:
+                logger.warning("No tickers available, using default SPY ticker")
+                all_tickers = ["SPY"]  # Default fallback ticker
+            
+            # Create fallback allocation with all tickers matching expected format
+            equal_weight = 1.0 / len(all_tickers)
             fallback_allocation = {
-                "filtered_tickers": {ticker: "equity" for ticker in all_tickers},
-                "filtered_weights": {ticker: 1.0/len(all_tickers) for ticker in all_tickers},
-                "portfolio_metrics": {
-                    "expected_return": 0.08,
-                    "volatility": 0.12,
-                    "sharpe_ratio": 1.0,
-                    "total_tickers": len(all_tickers)
-                }
+                "tickers": all_tickers,
+                "weights": [equal_weight] * len(all_tickers),
+                "weights_map": {ticker: equal_weight for ticker in all_tickers},
+                "expected_return": 0.08,
+                "volatility": 0.12,
+                "sharpe_ratio": 1.0,
+                "asset_class_allocations": {},
+                "total_tickers": len(all_tickers),
+                "optimization_method": "fallback_due_to_error"
             }
             
             state["portfolio_construction_state"] = {
@@ -511,12 +599,12 @@ class MainAgent:
             }
             state["portfolio_allocation"] = fallback_allocation
             
-            logger.info("✅ Portfolio construction completed with fallback due to error")
+            logger.info("SUCCESS: Portfolio construction completed with fallback due to error")
             return state
 
-    def selection_node(self, state: MainAgentState) -> MainAgentState:
+    async def selection_node(self, state: MainAgentState) -> MainAgentState:
         """
-        Node 3: Selection Agent - Process selected_tickers from user profile
+        Node 2: Selection Agent - Process selected_tickers from user profile
         
         Args:
             state: Current workflow state with user profile and risk blueprint
@@ -531,10 +619,30 @@ class MainAgent:
         try:
             state["current_node"] = "selection"
             
+            # Emit progress callback if available
+            progress_callback = state.get("progress_callback")
+            if progress_callback:
+                await progress_callback("selection_started", {
+                    "progress": 60,
+                    "message": "Selecting specific securities and analyzing market conditions..."
+                })
+            
             # Check prerequisites
             risk_blueprint = state.get("risk_blueprint")
+            logger.info(f"DEBUG: Risk blueprint from state: {risk_blueprint}")
+            logger.info(f"DEBUG: Risk analysis state: {state.get('risk_analysis_state')}")
+            
             if not risk_blueprint:
-                raise ValueError("Risk blueprint not available from risk analysis node")
+                # Try to get risk blueprint from risk_analysis_state
+                risk_analysis_state = state.get("risk_analysis_state", {})
+                risk_blueprint = risk_analysis_state.get("risk_blueprint", {})
+                logger.info(f"DEBUG: Risk blueprint from risk_analysis_state: {risk_blueprint}")
+                
+                if not risk_blueprint:
+                    raise ValueError("Risk blueprint not available from risk analysis node")
+                else:
+                    # Update the main state with the risk blueprint
+                    state["risk_blueprint"] = risk_blueprint
             
             user_profile = state.get("user_profile")
             if not user_profile:
@@ -573,23 +681,31 @@ class MainAgent:
             state["selection_state"] = selection_result
             state["security_selections"] = selection_result.get("final_selections", {})
             
-            logger.info("✅ Selection completed successfully")
+            logger.info("SUCCESS: Selection completed successfully")
             total_selections = sum(
                 len(selections.get("selections", [])) 
                 for selections in selection_result.get("final_selections", {}).values()
             )
             logger.info(f"Total securities selected: {total_selections}")
             
+            # Emit completion callback if available
+            if progress_callback:
+                await progress_callback("selection_complete", {
+                    "progress": 75,
+                    "message": "Security selection completed successfully",
+                    "security_selections": selection_result.get("final_selections", {})
+                })
+            
             return state
             
         except Exception as e:
-            logger.error(f"❌ Selection node failed: {str(e)}")
+            logger.error(f"ERROR: Selection node failed: {str(e)}")
             state["success"] = False
             state["error"] = f"Selection node failed: {str(e)}"
             state["node_errors"]["selection"] = str(e)
             return state
 
-    def communication_node(self, state: MainAgentState) -> MainAgentState:
+    async def communication_node(self, state: MainAgentState) -> MainAgentState:
         """
         Node 5: Communication Agent - Generate final investment report
         
@@ -605,6 +721,14 @@ class MainAgent:
         
         try:
             state["current_node"] = "communication"
+            
+            # Emit progress callback if available
+            progress_callback = state.get("progress_callback")
+            if progress_callback:
+                await progress_callback("communication_started", {
+                    "progress": 95,
+                    "message": "Generating comprehensive investment report..."
+                })
             
             # Check prerequisites
             required_data = ["user_profile", "risk_blueprint", "portfolio_allocation", "security_selections"]
@@ -642,14 +766,24 @@ class MainAgent:
             # Calculate total execution time
             state["execution_time"] = time.time() - state["start_time"]
             
-            logger.info("✅ Communication completed successfully")
+            logger.info("SUCCESS: Communication completed successfully")
             logger.info(f"Report generated: {report_result.get('report', {}).get('report_title', 'Unknown')}")
             logger.info(f"Total workflow execution time: {state['execution_time']:.2f} seconds")
+            
+            # Emit completion callback if available
+            if progress_callback:
+                await progress_callback("final_report_complete", {
+                    "progress": 100,
+                    "message": "Investment report generated successfully!",
+                    "final_report": report_result.get("report", {}),
+                    "execution_time": state["execution_time"],
+                    "status": "complete"
+                })
             
             return state
             
         except Exception as e:
-            logger.error(f"❌ Communication node failed: {str(e)}")
+            logger.error(f"ERROR: Communication node failed: {str(e)}")
             state["success"] = False
             state["error"] = f"Communication node failed: {str(e)}"
             state["node_errors"]["communication"] = str(e)
@@ -703,12 +837,13 @@ class MainAgent:
         except Exception as e:
             logger.warning(f"Failed to save data for communication agent: {e}")
 
-    def run_complete_workflow(self, user_profile: UserProfile) -> Dict[str, Any]:
+    async def run_complete_workflow(self, user_profile: UserProfile, progress_callback=None) -> Dict[str, Any]:
         """
         Run the complete investment portfolio workflow
         
         Args:
             user_profile: UserProfile object with user's assessment data
+            progress_callback: Optional callback function for progress updates
             
         Returns:
             Dictionary with complete workflow results
@@ -750,9 +885,13 @@ class MainAgent:
             
             if self.workflow is None:
                 raise ValueError("Workflow not initialized")
+            
+            # Add progress callback to state for nodes to use
+            if progress_callback:
+                initial_state["progress_callback"] = progress_callback
                 
-            # Use async execution since some nodes are async (e.g., risk_analysis_node)
-            final_state = asyncio.run(self.workflow.ainvoke(initial_state))
+            # Use await since we're now in an async function
+            final_state = await self.workflow.ainvoke(initial_state)
             
             # Calculate final execution time
             final_state["execution_time"] = time.time() - start_time
@@ -781,7 +920,7 @@ class MainAgent:
                     "timestamp": datetime.now().isoformat()
                 }
             else:
-                logger.error("❌ Workflow completed with errors")
+                logger.error("ERROR: Workflow completed with errors")
                 response = {
                     "status": "failed",
                     "error": final_state.get("error", "Unknown workflow error"),
@@ -800,7 +939,7 @@ class MainAgent:
             
         except Exception as e:
             execution_time = time.time() - start_time
-            logger.error(f"❌ Workflow execution failed: {str(e)}")
+            logger.error(f"ERROR: Workflow execution failed: {str(e)}")
             
             return {
                 "status": "failed",
@@ -863,11 +1002,11 @@ def main() -> int:
         print(f"Execution Time: {result['execution_time']:.2f} seconds")
         
         if result['status'] == 'success':
-            print("✅ All nodes executed successfully!")
+            print("SUCCESS: All nodes executed successfully!")
             if result['results']['final_report']:
                 print(f"Final Report Title: {result['results']['final_report'].get('report_title', 'N/A')}")
         else:
-            print("❌ Workflow failed:")
+            print("ERROR: Workflow failed:")
             print(f"Error: {result['error']}")
             if result.get('node_errors'):
                 print("Node-specific errors:")

@@ -223,7 +223,7 @@ Create backend/.env with your IBM WatsonX credentials:
 ```env
 WATSONX_APIKEY=your_api_key_here
 WATSONX_URL=https://us-south.ml.cloud.ibm.com
-PROJ_ID=your_project_id_here
+WATSONX_PROJECT_ID=your_project_id_here
 ```
 
 ### *Running the Application*

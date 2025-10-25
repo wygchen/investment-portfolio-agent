@@ -7,7 +7,7 @@
 
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -43,20 +43,43 @@ interface StockInsight {
   timestamp: string
 }
 
-// Portfolio stocks from dashboard
-const PORTFOLIO_STOCKS = [
-  { symbol: "VTI", name: "Vanguard Total Stock Market ETF" },
-  { symbol: "MSFT", name: "Microsoft Corporation" },
-  { symbol: "GOOGL", name: "Alphabet Inc Class A" },
-  { symbol: "AAPL", name: "Apple Inc" },
-  { symbol: "BND", name: "Vanguard Total Bond Market ETF" },
-  { symbol: "GLD", name: "SPDR Gold Shares ETF" }
-]
-
 export function AINewsInsightsComponent() {
   const [insights, setInsights] = useState<StockInsight[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [portfolioStocks, setPortfolioStocks] = useState<Array<{symbol: string, name: string}>>([])
+  
+  // Load actual portfolio tickers from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedPortfolio = localStorage.getItem('portfolioai_portfolio')
+      if (savedPortfolio) {
+        const portfolio = JSON.parse(savedPortfolio)
+        const stocks: Array<{symbol: string, name: string}> = []
+        
+        // Extract tickers from portfolio allocation array
+        if (portfolio.allocation && Array.isArray(portfolio.allocation)) {
+          portfolio.allocation.forEach((holding: any) => {
+            if (holding.symbol) {
+              stocks.push({
+                symbol: holding.symbol,
+                name: holding.name || holding.symbol
+              })
+            }
+          })
+        }
+        
+        console.log('📊 Loaded portfolio stocks from localStorage:', stocks)
+        setPortfolioStocks(stocks)
+      } else {
+        console.log('⚠️ No portfolio found in localStorage, using empty list')
+        setPortfolioStocks([])
+      }
+    } catch (e) {
+      console.error('❌ Error loading portfolio:', e)
+      setPortfolioStocks([])
+    }
+  }, [])
 
   // Test function to load comprehensive mock data
   const loadTestData = () => {
@@ -239,13 +262,18 @@ export function AINewsInsightsComponent() {
 
     try {
       console.log("🚀 Loading AI news insights...")
-      console.log("📊 Portfolio stocks:", PORTFOLIO_STOCKS)
+      console.log("📊 Portfolio stocks:", portfolioStocks)
+      
+      if (portfolioStocks.length === 0) {
+        setError("No portfolio stocks found. Please generate a portfolio first.")
+        return
+      }
 
-      const insightPromises = PORTFOLIO_STOCKS.map(async (stock) => {
+      const insightPromises = portfolioStocks.map(async (stock: {symbol: string, name: string}) => {
         try {
           console.log(`🔄 Analyzing ${stock.symbol}...`)
 
-          const response = await fetch('http://localhost:8003/api/news-insights', {
+          const response = await fetch('http://127.0.0.1:8000/api/news-insights', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -307,7 +335,7 @@ export function AINewsInsightsComponent() {
   }
 
   const getStockName = (symbol: string) => {
-    return PORTFOLIO_STOCKS.find(stock => stock.symbol === symbol)?.name || `${symbol} Inc`
+    return portfolioStocks.find((stock: {symbol: string, name: string}) => stock.symbol === symbol)?.name || `${symbol} Inc`
   }
 
   if (loading) {
