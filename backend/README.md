@@ -34,7 +34,7 @@ cp env.template .env
 # Edit .env file with your configuration
 # At minimum, update:
 # - WATSONX_APIKEY (if using AI features)
-# - PROJ_ID (Watsonx project ID)
+# - WATSONX_PROJECT_ID (Watsonx project ID)
 # - SECRET_KEY (for production)
 ```
 
@@ -152,7 +152,7 @@ load_dotenv()
 # Test credentials are loaded
 assert os.getenv('WATSONX_APIKEY'), 'WATSONX_APIKEY not found'
 assert os.getenv('WATSONX_URL'), 'WATSONX_URL not found'
-assert os.getenv('PROJ_ID'), 'PROJ_ID not found'
+assert os.getenv('WATSONX_PROJECT_ID'), 'WATSONX_PROJECT_ID not found'
 
 # Test model creation
 from watsonx_utils import create_models_by_config

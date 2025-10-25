@@ -34,10 +34,11 @@ class CommunicationAgent:
         """Setup IBM WatsonX LLM for report generation"""
         try:
             # Use same configuration as your teammate's market sentiment agent
+            # Use the project's .env names: WATSONX_APIKEY and WATSONX_PROJECT_ID
             self.llm = WatsonxLLM(
                 model_id="ibm/granite-3-8b-instruct",
                 project_id=os.getenv("WATSONX_PROJECT_ID"),
-                apikey=os.getenv("WATSONX_API_KEY"),
+                apikey=os.getenv("WATSONX_APIKEY"),
                 url=os.getenv("WATSONX_URL"),
                 params={
                     "decoding_method": "greedy",

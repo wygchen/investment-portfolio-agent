@@ -10,6 +10,7 @@ from typing import Dict, List, Any, Optional
 import os
 from langchain_ibm import WatsonxLLM
 from dotenv import load_dotenv
+from rate_limiter import rate_limit_api_call
 
 # Load environment variables
 load_dotenv()
@@ -57,8 +58,13 @@ class NewsSourceManager:
         except Exception as e:
             return []
     
-    def get_alpha_vantage_news(self, symbol: str, max_articles: int = 5) -> List[Dict]:
+    async def get_alpha_vantage_news(self, symbol: str, max_articles: int = 5) -> List[Dict]:
         """Get news from Alpha Vantage API"""
+        # Apply rate limiting
+        if not await rate_limit_api_call('alpha_vantage'):
+            print(f"Alpha Vantage rate limit exceeded for {symbol}")
+            return []
+            
         api_key = os.getenv('ALPHA_VANTAGE_API_KEY')
         
         try:
@@ -89,8 +95,13 @@ class NewsSourceManager:
         except Exception as e:
             return []
     
-    def get_finnhub_news(self, symbol: str, max_articles: int = 5) -> List[Dict]:
+    async def get_finnhub_news(self, symbol: str, max_articles: int = 5) -> List[Dict]:
         """Get news from Finnhub API"""
+        # Apply rate limiting
+        if not await rate_limit_api_call('finnhub'):
+            print(f"Finnhub rate limit exceeded for {symbol}")
+            return []
+            
         api_key = os.getenv('FINNHUB_API_KEY')
         if not api_key:
             return []
@@ -127,8 +138,13 @@ class NewsSourceManager:
         except Exception as e:
             return []
     
-    def get_newsapi_news(self, symbol: str, max_articles: int = 5) -> List[Dict]:
+    async def get_newsapi_news(self, symbol: str, max_articles: int = 5) -> List[Dict]:
         """Get news from NewsAPI"""
+        # Apply rate limiting
+        if not await rate_limit_api_call('newsapi'):
+            print(f"NewsAPI rate limit exceeded for {symbol}")
+            return []
+            
         api_key = os.getenv('NEWSAPI_KEY')
         if not api_key:
             return []
@@ -246,13 +262,13 @@ class EnhancedMarketAnalyzer:
             
             # Check environment variables
             api_key = os.getenv("WATSONX_APIKEY")
-            proj_id = os.getenv("PROJ_ID")
+            proj_id = os.getenv("WATSONX_PROJECT_ID")
             
             if not api_key:
                 print(f"❌ WATSONX_APIKEY not found in environment")
                 return None
             if not proj_id:
-                print(f"❌ PROJ_ID not found in environment")
+                print(f"❌ WATSONX_PROJECT_ID not found in environment")
                 return None
                 
             print(f"✅ Environment variables found - initializing LLM...")
@@ -277,7 +293,7 @@ class EnhancedMarketAnalyzer:
             print(f"❌ Could not initialize WatsonX LLM: {e}")
             return None
     
-    def generate_comprehensive_analysis(self, ticker: str) -> Dict[str, Any]:
+    async def generate_comprehensive_analysis(self, ticker: str) -> Dict[str, Any]:
         """Generate comprehensive market analysis with AI insights"""
         
         print(f"\n🚀 Starting comprehensive analysis for {ticker}")
@@ -292,7 +308,7 @@ class EnhancedMarketAnalyzer:
         all_news = []
         for source_name, source_func in self.news_manager.sources.items():
             try:
-                news = source_func(ticker, max_articles=3)
+                news = await source_func(ticker, max_articles=3)
                 all_news.extend(news)
                 print(f"✅ {source_name}: {len(news)} articles")
             except Exception as e:
@@ -379,9 +395,9 @@ class EnhancedMarketAnalyzer:
 
 
 # Main function for API integration
-def get_enhanced_market_analysis(ticker: str) -> Dict[str, Any]:
+async def get_enhanced_market_analysis(ticker: str) -> Dict[str, Any]:
     """Main function to get comprehensive market analysis"""
     analyzer = EnhancedMarketAnalyzer()
-    return analyzer.generate_comprehensive_analysis(ticker)
+    return await analyzer.generate_comprehensive_analysis(ticker)
 
 

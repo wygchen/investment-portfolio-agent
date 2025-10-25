@@ -20,7 +20,7 @@ class NewsInsightsAnalyzer:
     def __init__(self):
         self.finnhub_key = os.getenv('FINNHUB_API_KEY')
         self.watsonx_api_key = os.getenv('WATSONX_APIKEY')
-        self.watsonx_project_id = os.getenv('PROJ_ID')
+        self.watsonx_project_id = os.getenv('WATSONX_PROJECT_ID')
         
         # Initialize WatsonX LLM if credentials are available
         self.llm = None
@@ -28,7 +28,7 @@ class NewsInsightsAnalyzer:
             try:
                 self.llm = ChatWatsonx(
                     model_id="ibm/granite-3-3-8b-instruct",
-                    url="https://us-south.ml.cloud.ibm.com",
+                    url=os.getenv("WATSONX_URL"),
                     apikey=self.watsonx_api_key,
                     project_id=self.watsonx_project_id,
                     params={

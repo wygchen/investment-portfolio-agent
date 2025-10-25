@@ -26,7 +26,7 @@ def load_environment() -> Dict[str, str]:
     """
     load_dotenv()
     
-    required_vars = ['WATSONX_APIKEY', 'WATSONX_URL', 'PROJ_ID']
+    required_vars = ['WATSONX_APIKEY', 'WATSONX_URL', 'WATSONX_PROJECT_ID']
     env_vars = {}
     
     for var in required_vars:
@@ -92,7 +92,7 @@ def create_watsonx_llm(
     client = APIClient(
         credentials, 
         api_key=env_vars['WATSONX_APIKEY'], 
-        project_id=env_vars['PROJ_ID']
+        project_id=env_vars['WATSONX_PROJECT_ID']
     )
     
     # Create ChatWatsonx instance
@@ -146,7 +146,7 @@ def create_watsonx_embeddings(
     embeddings = WatsonxEmbeddings(
         model_id=model_id,
         url=env_vars['WATSONX_URL'],
-        project_id=env_vars['PROJ_ID'],
+        project_id=env_vars['WATSONX_PROJECT_ID'],
         params=embed_params,
         username=env_vars.get('WATSONX_USERNAME', 'apikey')  # Use 'apikey' as default username
     )

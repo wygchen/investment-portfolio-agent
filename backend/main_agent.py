@@ -13,7 +13,7 @@ Workflow:
 
 Configuration:
 - Uses environment variables for WatsonX API credentials (via watsonx_utils.py)
-- Required .env variables: WATSONX_APIKEY, WATSONX_URL, PROJ_ID
+- Required .env variables: WATSONX_APIKEY, WATSONX_URL, WATSONX_PROJECT_ID
 - See watsonx_utils.py for proper credential configuration
 """
 
@@ -237,7 +237,7 @@ class MainAgent:
         # Add edges to define the sequential flow
         workflow.add_edge(START, "risk_analysis")
         workflow.add_edge("risk_analysis", "selection")
-        workflow.add_edge( "selection", "portfolio_construction")
+        workflow.add_edge("selection", "portfolio_construction")
         workflow.add_edge("portfolio_construction", "communication")
         workflow.add_edge("communication", END)
         
@@ -300,12 +300,24 @@ class MainAgent:
             # Run Risk Analytics Agent
             risk_result = await self.risk_analytics_agent.process(agent_context)
             
+            logger.info(f"DEBUG: Risk result success: {risk_result.success}")
+            logger.info(f"DEBUG: Risk result error: {risk_result.error}")
+            logger.info(f"DEBUG: Risk result content: {risk_result.content}")
+            logger.info(f"DEBUG: Risk result structured_data: {risk_result.structured_data}")
+            
             if not risk_result.success:
                 raise Exception(f"Risk analysis failed: {risk_result.error or risk_result.content}")
             
             # Extract risk blueprint and analysis
             risk_data = risk_result.structured_data or {}
             risk_blueprint = risk_data.get("risk_blueprint", {})
+            
+            logger.info(f"DEBUG: Extracted risk_data: {risk_data}")
+            logger.info(f"DEBUG: Extracted risk_blueprint: {risk_blueprint}")
+            
+            # Validate that risk blueprint was created
+            if not risk_blueprint:
+                raise ValueError("Risk blueprint is empty - risk analytics agent did not generate proper blueprint")
             
             # Update state
             state["risk_analysis_state"] = {
@@ -318,7 +330,7 @@ class MainAgent:
             }
             state["risk_blueprint"] = risk_blueprint
             
-            logger.info("✅ Risk analysis completed successfully")
+            logger.info("SUCCESS: Risk analysis completed successfully")
             logger.info(f"Risk score: {risk_data.get('risk_score', 'N/A')}")
             logger.info(f"Volatility target: {risk_data.get('volatility_target', 'N/A')}%")
             if risk_blueprint and risk_blueprint.get('risk_capacity'):
@@ -338,7 +350,7 @@ class MainAgent:
             return state
             
         except Exception as e:
-            logger.error(f"❌ Risk analysis node failed: {str(e)}")
+            logger.error(f"ERROR: Risk analysis node failed: {str(e)}")
             state["success"] = False
             state["error"] = f"Risk analysis node failed: {str(e)}"
             state["node_errors"]["risk_analysis"] = str(e)
@@ -346,7 +358,7 @@ class MainAgent:
 
     async def portfolio_construction_node(self, state: MainAgentState) -> MainAgentState:
         """
-        Node 4: Portfolio Construction - Optimize portfolio allocation for selected tickers
+        Node 3: Portfolio Construction - Optimize portfolio allocation for selected tickers
         
         Args:
             state: Current workflow state with risk blueprint and security selections
@@ -513,7 +525,7 @@ class MainAgent:
                 }
                 state["portfolio_allocation"] = portfolio_allocation
                 
-                logger.info("✅ Portfolio construction completed successfully")
+                logger.info("SUCCESS: Portfolio construction completed successfully")
                 logger.info(f"Final portfolio: {len(filtered_tickers)} assets")
                 logger.info(f"Expected return: {portfolio_return:.2%}")
                 logger.info(f"Volatility: {portfolio_volatility:.2%}")
@@ -553,11 +565,11 @@ class MainAgent:
                 }
                 state["portfolio_allocation"] = fallback_allocation
                 
-                logger.info("✅ Portfolio construction completed with equal weight fallback")
+                logger.info("SUCCESS: Portfolio construction completed with equal weight fallback")
                 return state
                 
         except Exception as e:
-            logger.error(f"❌ Portfolio construction failed: {str(e)}")
+            logger.error(f"ERROR: Portfolio construction failed: {str(e)}")
             
             # Use all_tickers if available, otherwise use default ticker
             if not all_tickers:
@@ -587,12 +599,12 @@ class MainAgent:
             }
             state["portfolio_allocation"] = fallback_allocation
             
-            logger.info("✅ Portfolio construction completed with fallback due to error")
+            logger.info("SUCCESS: Portfolio construction completed with fallback due to error")
             return state
 
     async def selection_node(self, state: MainAgentState) -> MainAgentState:
         """
-        Node 3: Selection Agent - Process selected_tickers from user profile
+        Node 2: Selection Agent - Process selected_tickers from user profile
         
         Args:
             state: Current workflow state with user profile and risk blueprint
@@ -617,8 +629,20 @@ class MainAgent:
             
             # Check prerequisites
             risk_blueprint = state.get("risk_blueprint")
+            logger.info(f"DEBUG: Risk blueprint from state: {risk_blueprint}")
+            logger.info(f"DEBUG: Risk analysis state: {state.get('risk_analysis_state')}")
+            
             if not risk_blueprint:
-                raise ValueError("Risk blueprint not available from risk analysis node")
+                # Try to get risk blueprint from risk_analysis_state
+                risk_analysis_state = state.get("risk_analysis_state", {})
+                risk_blueprint = risk_analysis_state.get("risk_blueprint", {})
+                logger.info(f"DEBUG: Risk blueprint from risk_analysis_state: {risk_blueprint}")
+                
+                if not risk_blueprint:
+                    raise ValueError("Risk blueprint not available from risk analysis node")
+                else:
+                    # Update the main state with the risk blueprint
+                    state["risk_blueprint"] = risk_blueprint
             
             user_profile = state.get("user_profile")
             if not user_profile:
@@ -657,7 +681,7 @@ class MainAgent:
             state["selection_state"] = selection_result
             state["security_selections"] = selection_result.get("final_selections", {})
             
-            logger.info("✅ Selection completed successfully")
+            logger.info("SUCCESS: Selection completed successfully")
             total_selections = sum(
                 len(selections.get("selections", [])) 
                 for selections in selection_result.get("final_selections", {}).values()
@@ -675,7 +699,7 @@ class MainAgent:
             return state
             
         except Exception as e:
-            logger.error(f"❌ Selection node failed: {str(e)}")
+            logger.error(f"ERROR: Selection node failed: {str(e)}")
             state["success"] = False
             state["error"] = f"Selection node failed: {str(e)}"
             state["node_errors"]["selection"] = str(e)
@@ -742,7 +766,7 @@ class MainAgent:
             # Calculate total execution time
             state["execution_time"] = time.time() - state["start_time"]
             
-            logger.info("✅ Communication completed successfully")
+            logger.info("SUCCESS: Communication completed successfully")
             logger.info(f"Report generated: {report_result.get('report', {}).get('report_title', 'Unknown')}")
             logger.info(f"Total workflow execution time: {state['execution_time']:.2f} seconds")
             
@@ -759,7 +783,7 @@ class MainAgent:
             return state
             
         except Exception as e:
-            logger.error(f"❌ Communication node failed: {str(e)}")
+            logger.error(f"ERROR: Communication node failed: {str(e)}")
             state["success"] = False
             state["error"] = f"Communication node failed: {str(e)}"
             state["node_errors"]["communication"] = str(e)
@@ -896,7 +920,7 @@ class MainAgent:
                     "timestamp": datetime.now().isoformat()
                 }
             else:
-                logger.error("❌ Workflow completed with errors")
+                logger.error("ERROR: Workflow completed with errors")
                 response = {
                     "status": "failed",
                     "error": final_state.get("error", "Unknown workflow error"),
@@ -915,7 +939,7 @@ class MainAgent:
             
         except Exception as e:
             execution_time = time.time() - start_time
-            logger.error(f"❌ Workflow execution failed: {str(e)}")
+            logger.error(f"ERROR: Workflow execution failed: {str(e)}")
             
             return {
                 "status": "failed",
@@ -978,11 +1002,11 @@ def main() -> int:
         print(f"Execution Time: {result['execution_time']:.2f} seconds")
         
         if result['status'] == 'success':
-            print("✅ All nodes executed successfully!")
+            print("SUCCESS: All nodes executed successfully!")
             if result['results']['final_report']:
                 print(f"Final Report Title: {result['results']['final_report'].get('report_title', 'N/A')}")
         else:
-            print("❌ Workflow failed:")
+            print("ERROR: Workflow failed:")
             print(f"Error: {result['error']}")
             if result.get('node_errors'):
                 print("Node-specific errors:")

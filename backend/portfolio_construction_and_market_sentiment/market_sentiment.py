@@ -68,7 +68,7 @@ def get_yahoo_news_description(ticker_symbol, max_articles=45):
 llm = WatsonxLLM(
     model_id="ibm/granite-3-3-8b-instruct",
     project_id=os.getenv("WATSONX_PROJECT_ID"),
-    apikey=os.getenv("WATSONX_API_KEY"),
+    apikey=os.getenv("WATSONX_APIKEY"),
     url=os.getenv("WATSONX_URL"),
     params={
         "decoding_method": "greedy",

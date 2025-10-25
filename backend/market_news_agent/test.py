@@ -21,11 +21,11 @@ def test_environment_variables():
     # WatsonX API Keys
     watsonx_apikey = os.getenv('WATSONX_APIKEY')
     watsonx_url = os.getenv('WATSONX_URL')
-    proj_id = os.getenv('PROJ_ID')
+    proj_id = os.getenv('WATSONX_PROJECT_ID')
     
     print(f"WATSONX_APIKEY: {'✅ Set' if watsonx_apikey else '❌ Missing'}")
     print(f"WATSONX_URL: {'✅ Set' if watsonx_url else '❌ Missing'}")
-    print(f"PROJ_ID: {'✅ Set' if proj_id else '❌ Missing'}")
+    print(f"WATSONX_PROJECT_ID: {'✅ Set' if proj_id else '❌ Missing'}")
     
     # News API Keys
     newsapi_key = os.getenv('NEWSAPI_KEY')
@@ -107,7 +107,7 @@ def test_enhanced_market_analysis():
 
 
 
-def test_complete_pipeline():
+async def test_complete_pipeline():
     """Test the complete enhanced market analysis pipeline"""
     print("\n🔄 Testing Enhanced Market Analysis Pipeline...")
     
@@ -116,7 +116,7 @@ def test_complete_pipeline():
         
         # Test enhanced market analysis only
         print("🔄 Testing enhanced market analysis for AAPL...")
-        result = get_enhanced_market_analysis("AAPL")
+        result = await get_enhanced_market_analysis("AAPL")
         
         print(f"✅ Enhanced market analysis complete for AAPL")
         print(f"   Company: {result['stock_metrics'].get('company_name', 'N/A')}")
@@ -131,7 +131,7 @@ def test_complete_pipeline():
         print(f"❌ Enhanced market analysis pipeline error: {e}")
         return False
 
-def main():
+async def main():
     """Run all tests"""
     print("🚀 Starting API Key and Integration Tests\n")
     
@@ -145,7 +145,7 @@ def main():
     news_ok = test_enhanced_market_analysis()
     
     # Test complete pipeline (includes WatsonX LLM testing)
-    pipeline_ok = test_complete_pipeline()
+    pipeline_ok = await test_complete_pipeline()
     
     # Summary
     print("\n" + "="*50)
@@ -164,7 +164,7 @@ def main():
         if not env_status['watsonx_ready']:
             print("\n💡 To fix WatsonX issues:")
             print("   1. Add WATSONX_APIKEY to your .env file")
-            print("   2. Add PROJ_ID to your .env file")
+            print("   2. Add WATSONX_PROJECT_ID to your .env file")
             print("   3. Optionally add WATSONX_URL (defaults to us-south)")
         
         if not env_status['news_apis_available']:
@@ -175,4 +175,5 @@ def main():
             print("   Note: Yahoo Finance works without API keys")
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())

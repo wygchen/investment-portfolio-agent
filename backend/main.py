@@ -3,6 +3,12 @@
 FastAPI Backend
 """
 
+# Load env vars as early as possible so modules that import at module-level
+# can see WATSONX_API_KEY and other credentials. This must run before other
+# imports that might instantiate LLMs or SDK clients.
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -52,6 +58,19 @@ def safe_json_serialize(obj, max_depth=10, _depth=0):
     # For any other type, convert to string
     return str(obj)
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env (if present) as early as possible so
+# modules that instantiate LLMs or SDK clients can read API keys.
+load_dotenv()
+
+# Log presence of critical Watsonx env vars (do NOT log secret values)
+import os
+logger = logging.getLogger(__name__)
+logger.info("WATSONX_APIKEY present: %s", bool(os.getenv("WATSONX_APIKEY")))
+logger.info("WATSONX_PROJECT_ID present: %s", bool(os.getenv("WATSONX_PROJECT_ID")))
+logger.info("WATSONX_URL present: %s", bool(os.getenv("WATSONX_URL")))
+
 # Create FastAPI app
 app = FastAPI(
     title="Investment Portfolio Advisor API",
@@ -59,13 +78,14 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configure CORS
+# Configure CORS - Restricted to specific domains for security
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for production deployment
+    allow_origins=allowed_origins,  # Restricted to specific domains
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 # No initialization needed - using standalone functions
@@ -1110,7 +1130,7 @@ async def get_news_insights_endpoint(request_data: Dict[str, Any]):
         logger.info(f"🔄 Getting enhanced market analysis for {symbol}")
         
         # Get comprehensive analysis from enhanced_market_analysis
-        analysis_data = get_enhanced_market_analysis(symbol)
+        analysis_data = await get_enhanced_market_analysis(symbol)
         
         # Transform to match frontend expected format
         transformed_data = {

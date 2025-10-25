@@ -2,14 +2,19 @@ import pandas as pd
 import yfinance as yf
 from ddgs import DDGS
 from langchain_ibm import WatsonxLLM
+import logging
 from textblob import TextBlob
 import os
 from dataclasses import asdict
 from .market_sentiment_types import MarketSentiment
 from dotenv import load_dotenv
+from rate_limiter import rate_limit_api_call
 
 # Load environment variables
 load_dotenv()
+
+# Logger for this module
+logger = logging.getLogger(__name__)
 
 # Debug flag: set environment variable MARKET_SENTIMENT_DEBUG=1 to print raw LLM responses
 DEBUG_LLM = os.getenv("MARKET_SENTIMENT_DEBUG", "0") == "1"
@@ -67,28 +72,57 @@ def get_yahoo_news_description(ticker_symbol, max_articles=45):
     except Exception as e:
         return f"Error fetching news for {ticker_symbol}: {str(e)}"
 
-# Setup Watsonx LLM
-llm = WatsonxLLM(
-    model_id="ibm/granite-3-3-8b-instruct",
-    project_id=os.getenv("WATSONX_PROJECT_ID"),
-    apikey=os.getenv("WATSONX_API_KEY"),
-    url=os.getenv("WATSONX_URL"),
-    params={
-        "decoding_method": "greedy",
-        "max_new_tokens": 150,
-        "temperature": 0.1,
-        "repetition_penalty": 1.1
-    }
-)
+"""
+Initialize Watsonx LLM using a single, explicit environment variable name.
+
+This module expects the API key to be available as `WATSONX_APIKEY` and the
+project id as `WATSONX_PROJECT_ID` in the environment (matching the project's .env).
+If `WATSONX_APIKEY` is not set the LLM will not be instantiated and the code
+falls back to heuristic sentiment methods.
+"""
+
+# Use the single agreed-upon env var names from the project's .env
+apikey = os.getenv("WATSONX_APIKEY")
+project_id = os.getenv("WATSONX_PROJECT_ID")
+url = os.getenv("WATSONX_URL")
+
+if not apikey:
+    logger.warning(
+        "WATSONX_APIKEY not found in environment; WatsonxLLM will be disabled."
+    )
+    llm = None
+else:
+    try:
+        llm = WatsonxLLM(
+            model_id="ibm/granite-3-3-8b-instruct",
+            project_id=project_id,
+            apikey=apikey,
+            url=url,
+            params={
+                "decoding_method": "greedy",
+                "max_new_tokens": 150,
+                "temperature": 0.1,
+                "repetition_penalty": 1.1,
+            },
+        )
+        logger.info("WatsonxLLM initialized successfully using WATSONX_APIKEY")
+    except Exception as e:
+        logger.exception(f"Failed to initialize WatsonxLLM: {e}")
+        llm = None
 
 
-def watsonx_sentiment_analysis(text: str, return_label: bool = False):
+async def watsonx_sentiment_analysis(text: str, return_label: bool = False):
     """
     Use Watsonx LLM to classify sentiment of a text.
 
     By default returns a numeric score: 1.0 (Positive), -1.0 (Negative), 0.0 (Neutral)
     If return_label=True it returns a single-word string: 'Positive', 'Negative', or 'Neutral'.
     """
+    # Apply rate limiting
+    if not await rate_limit_api_call('watsonx'):
+        logger.warning("WatsonX rate limit exceeded, using fallback sentiment analysis")
+        return _fallback_sentiment_analysis(text, return_label)
+    
     prompt = f"""
     Analyze the sentiment of the following financial news text.
     Respond with exactly ONE word only: Positive, Negative, or Neutral. Do not include any explanation or extra text.
@@ -143,18 +177,7 @@ def watsonx_sentiment_analysis(text: str, return_label: bool = False):
 
     # If label is empty, use a lightweight keyword heuristic as a fallback
     if not label:
-        # Very small heuristic-based fallback if LLM unavailable or failed
-        low_text = text.lower()
-        positive_keywords = ['gain', 'up', 'rise', 'positive', 'beat', 'outperform', 'bull']
-        negative_keywords = ['loss', 'down', 'fall', 'drop', 'negative', 'miss', 'bear']
-        pos = any(k in low_text for k in positive_keywords)
-        neg = any(k in low_text for k in negative_keywords)
-        if pos and not neg:
-            return 1.0
-        elif neg and not pos:
-            return -1.0
-        else:
-            return 0.0
+        return _fallback_sentiment_analysis(text, return_label)
 
     # Normalize label to single word
     label_word = None
@@ -167,17 +190,7 @@ def watsonx_sentiment_analysis(text: str, return_label: bool = False):
 
     # If still not recognized, use heuristic from original fallback
     if label_word is None:
-        low_text = text.lower()
-        positive_keywords = ['gain', 'up', 'rise', 'positive', 'beat', 'outperform', 'bull']
-        negative_keywords = ['loss', 'down', 'fall', 'drop', 'negative', 'miss', 'bear']
-        pos = any(k in low_text for k in positive_keywords)
-        neg = any(k in low_text for k in negative_keywords)
-        if pos and not neg:
-            label_word = "Positive"
-        elif neg and not pos:
-            label_word = "Negative"
-        else:
-            label_word = "Neutral"
+        return _fallback_sentiment_analysis(text, return_label)
 
     if return_label:
         return label_word
@@ -189,6 +202,21 @@ def watsonx_sentiment_analysis(text: str, return_label: bool = False):
         return -1.0
     else:
         return 0.0
+
+def _fallback_sentiment_analysis(text: str, return_label: bool = False):
+    """Fallback sentiment analysis using keyword matching"""
+    low_text = text.lower()
+    positive_keywords = ['gain', 'up', 'rise', 'positive', 'beat', 'outperform', 'bull']
+    negative_keywords = ['loss', 'down', 'fall', 'drop', 'negative', 'miss', 'bear']
+    pos = any(k in low_text for k in positive_keywords)
+    neg = any(k in low_text for k in negative_keywords)
+    
+    if pos and not neg:
+        return "Positive" if return_label else 1.0
+    elif neg and not pos:
+        return "Negative" if return_label else -1.0
+    else:
+        return "Neutral" if return_label else 0.0
 
 # 2. News Sentiment (via DuckDuckGo Search + watsonx)
 def get_news_sentiment(ticker, num_results=45):

@@ -3,17 +3,12 @@ Risk Analytics Agent for comprehensive financial risk assessment.
 Specializes in analyzing user assessment data and generating risk blueprints.
 """
 
-import json
 import logging
-import numpy as np
-from typing import Dict, Any, Optional, List, Tuple
-import re
-from datetime import datetime
+from typing import Dict, Any, Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ibm import ChatWatsonx
 
-from .base_agent import BaseAgent, AgentContext, AgentStatus
+from .base_agent import BaseAgent, AgentContext
 from .utils.financial_ratios import FinancialRatioEngine
 
 
@@ -84,7 +79,8 @@ TONE: Professional, analytical, confident, and educational. Explain complex conc
             (81, 95): 25.0,  # Aggressive
             (96, 100): 30.0  # Very aggressive
         }
-    
+        
+
     async def _execute_agent_logic(self, context: AgentContext) -> Dict[str, Any]:
         """
         Execute comprehensive risk analysis logic.
@@ -149,7 +145,7 @@ TONE: Professional, analytical, confident, and educational. Explain complex conc
             },
             "confidence": 0.92
         }
-    
+
     def _extract_key_ratios(self, ratio_results: Dict[str, Any]) -> Dict[str, float]:
         """Extract key ratio values for backward compatibility."""
         key_ratios = {}
@@ -195,6 +191,87 @@ TONE: Professional, analytical, confident, and educational. Explain complex conc
             "liquidity_ratio": min(24, max(0.5, liquidity_ratio)),
             "debt_to_asset": min(80, max(0, debt_to_asset))
         }
+
+    def _create_risk_blueprint(self, risk_capacity: Dict[str, Any], risk_tolerance: Dict[str, Any],
+                             risk_requirement: Dict[str, Any], liquidity_constraints: Dict[str, Any],
+                             time_horizon_bands: Dict[str, str], risk_score: int,
+                             volatility_target: float, financial_ratios: Dict[str, float]) -> Dict[str, Any]:
+        """Create structured risk blueprint JSON."""
+        
+        # Determine overall risk level
+        risk_levels = [risk_capacity['level'], risk_tolerance['level'], risk_requirement['level']]
+        risk_level_priority = {'low': 0, 'medium': 1, 'high': 2}
+        
+        # Use the most conservative (lowest) risk level for safety
+        overall_risk_level = min(risk_levels, key=lambda x: risk_level_priority[x])
+        
+        return {
+            # Keep original structure for main_agent.py compatibility
+            "risk_capacity": risk_capacity,  # Keep as dict with 'level' key
+            "risk_tolerance": risk_tolerance,  # Keep as dict with 'level' key  
+            "risk_requirement": risk_requirement,  # Keep as dict with 'level' key
+            "liquidity_constraints": liquidity_constraints,
+            "time_horizon_bands": time_horizon_bands,
+            "risk_level_summary": overall_risk_level,
+            "risk_score": str(risk_score),
+            "volatility_target": f"{volatility_target:.1f}%",
+            "financial_ratios": {
+                "savings_rate": f"{financial_ratios['savings_rate']:.1f}%",
+                "liquidity_ratio": f"{financial_ratios['liquidity_ratio']:.1f} months",
+                "debt_to_asset": f"{financial_ratios['debt_to_asset']:.1f}%"
+            },
+            # Add formatted versions for display
+            "risk_capacity_display": f"{risk_capacity['level']} - {risk_capacity['description']}",
+            "risk_tolerance_display": f"{risk_tolerance['level']} - {risk_tolerance['description']}",
+            "risk_requirement_display": f"{risk_requirement['level']} - {risk_requirement['description']}",
+            # Add sector and region data for equity selection agent
+            "equity_selection_params": {
+                "sectors": liquidity_constraints.get("sector_preferences", []) if isinstance(liquidity_constraints, dict) else [],
+                "regions": liquidity_constraints.get("region_preferences", []) if isinstance(liquidity_constraints, dict) else [],
+                "volatility_target": volatility_target,
+                "risk_score": risk_score,
+                "liquidity_score": liquidity_constraints.get("liquidity_score", 0) if isinstance(liquidity_constraints, dict) else 0,
+                "age_factor": liquidity_constraints.get("age_factor", 35) if isinstance(liquidity_constraints, dict) else 35,
+                "dependent_factor": liquidity_constraints.get("dependent_factor", 0) if isinstance(liquidity_constraints, dict) else 0
+            }
+        }
+
+
+    def _normalize_user_assessment(self, raw: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize various UserProfile shapes into the fields this agent expects."""
+        normalized = dict(raw or {})
+        if 'monthly_contribution' not in normalized:
+            if 'savings_rate' in normalized:
+                try:
+                    normalized['monthly_contribution'] = float(normalized.get('savings_rate') or 0)
+                except Exception:
+                    normalized['monthly_contribution'] = 0.0
+            else:
+                normalized['monthly_contribution'] = 0.0
+        normalized['income'] = float(normalized.get('income') or 0)
+        if 'net_worth' not in normalized or normalized['net_worth'] is None:
+            normalized['net_worth'] = 0
+        if 'dependents' not in normalized or normalized['dependents'] is None:
+            normalized['dependents'] = 0
+        if 'target_amount' not in normalized or normalized['target_amount'] is None:
+            normalized['target_amount'] = 0
+        rt = normalized.get('risk_tolerance')
+        if isinstance(rt, str):
+            mapping = {'low': 3, 'medium': 5, 'moderate': 5, 'high': 8}
+            normalized['risk_tolerance'] = mapping.get(rt.strip().lower(), 5)
+        elif isinstance(rt, (int, float)):
+            normalized['risk_tolerance'] = int(rt)
+        else:
+            normalized['risk_tolerance'] = 5
+        try:
+            normalized['time_horizon'] = int(normalized.get('time_horizon') or 10)
+        except Exception:
+            normalized['time_horizon'] = 10
+        try:
+            normalized['age'] = int(normalized.get('age') or 35)
+        except Exception:
+            normalized['age'] = 35
+        return normalized
     
     def _assess_risk_capacity(self, assessment: Dict[str, Any], ratios: Dict[str, float], 
                             ratio_results: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -597,50 +674,6 @@ RISK FACTORS TO MONITOR:
 - Time horizon adjustments as goals approach
 """
     
-    def _create_risk_blueprint(self, risk_capacity: Dict[str, Any], risk_tolerance: Dict[str, Any],
-                             risk_requirement: Dict[str, Any], liquidity_constraints: Dict[str, Any],
-                             time_horizon_bands: Dict[str, str], risk_score: int,
-                             volatility_target: float, financial_ratios: Dict[str, float]) -> Dict[str, Any]:
-        """Create structured risk blueprint JSON."""
-        
-        # Determine overall risk level
-        risk_levels = [risk_capacity['level'], risk_tolerance['level'], risk_requirement['level']]
-        risk_level_priority = {'low': 0, 'medium': 1, 'high': 2}
-        
-        # Use the most conservative (lowest) risk level for safety
-        overall_risk_level = min(risk_levels, key=lambda x: risk_level_priority[x])
-        
-        return {
-            # Keep original structure for main_agent.py compatibility
-            "risk_capacity": risk_capacity,  # Keep as dict with 'level' key
-            "risk_tolerance": risk_tolerance,  # Keep as dict with 'level' key  
-            "risk_requirement": risk_requirement,  # Keep as dict with 'level' key
-            "liquidity_constraints": liquidity_constraints,
-            "time_horizon_bands": time_horizon_bands,
-            "risk_level_summary": overall_risk_level,
-            "risk_score": str(risk_score),
-            "volatility_target": f"{volatility_target:.1f}%",
-            "financial_ratios": {
-                "savings_rate": f"{financial_ratios['savings_rate']:.1f}%",
-                "liquidity_ratio": f"{financial_ratios['liquidity_ratio']:.1f} months",
-                "debt_to_asset": f"{financial_ratios['debt_to_asset']:.1f}%"
-            },
-            # Add formatted versions for display
-            "risk_capacity_display": f"{risk_capacity['level']} - {risk_capacity['description']}",
-            "risk_tolerance_display": f"{risk_tolerance['level']} - {risk_tolerance['description']}",
-            "risk_requirement_display": f"{risk_requirement['level']} - {risk_requirement['description']}",
-            # Add sector and region data for equity selection agent
-            "equity_selection_params": {
-                "sectors": liquidity_constraints.get("sector_preferences", []) if isinstance(liquidity_constraints, dict) else [],
-                "regions": liquidity_constraints.get("region_preferences", []) if isinstance(liquidity_constraints, dict) else [],
-                "volatility_target": volatility_target,
-                "risk_score": risk_score,
-                "liquidity_score": liquidity_constraints.get("liquidity_score", 0) if isinstance(liquidity_constraints, dict) else 0,
-                "age_factor": liquidity_constraints.get("age_factor", 35) if isinstance(liquidity_constraints, dict) else 35,
-                "dependent_factor": liquidity_constraints.get("dependent_factor", 0) if isinstance(liquidity_constraints, dict) else 0
-            }
-        }
-    
     def _validate_input(self, context: AgentContext) -> Dict[str, Any]:
         """Validate input for risk analytics agent."""
         base_validation = super()._validate_input(context)
@@ -662,45 +695,3 @@ RISK FACTORS TO MONITOR:
             return {"valid": False, "error": "Time horizon must be at least 1 year"}
         
         return {"valid": True}
-
-    def _normalize_user_assessment(self, raw: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize various UserProfile shapes into the fields this agent expects."""
-        normalized = dict(raw or {})
-        # Map monthly contribution from savings_rate (treated as monthly savings amount)
-        if 'monthly_contribution' not in normalized:
-            if 'savings_rate' in normalized:
-                try:
-                    normalized['monthly_contribution'] = float(normalized.get('savings_rate') or 0)
-                except Exception:
-                    normalized['monthly_contribution'] = 0.0
-            else:
-                normalized['monthly_contribution'] = 0.0
-        # Ensure income present
-        normalized['income'] = float(normalized.get('income') or 0)
-        # Provide defaults for fields not present in UserProfile
-        if 'net_worth' not in normalized or normalized['net_worth'] is None:
-            normalized['net_worth'] = 0
-        if 'dependents' not in normalized or normalized['dependents'] is None:
-            normalized['dependents'] = 0
-        if 'target_amount' not in normalized or normalized['target_amount'] is None:
-            normalized['target_amount'] = 0
-        # Normalize risk_tolerance to numeric 1-10 scale if provided as string
-        rt = normalized.get('risk_tolerance')
-        if isinstance(rt, str):
-            mapping = {'low': 3, 'medium': 5, 'moderate': 5, 'high': 8}
-            normalized['risk_tolerance'] = mapping.get(rt.strip().lower(), 5)
-        elif isinstance(rt, (int, float)):
-            normalized['risk_tolerance'] = int(rt)
-        else:
-            normalized['risk_tolerance'] = 5
-        # Normalize time_horizon
-        try:
-            normalized['time_horizon'] = int(normalized.get('time_horizon') or 10)
-        except Exception:
-            normalized['time_horizon'] = 10
-        # Age optional default
-        try:
-            normalized['age'] = int(normalized.get('age') or 35)
-        except Exception:
-            normalized['age'] = 35
-        return normalized
