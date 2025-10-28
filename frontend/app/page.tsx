@@ -468,35 +468,25 @@ export default function HomePage() {
         <div className="space-y-2">
           {[
             { 
-              name: '24/7 AI Chatbot', 
-                scores: [4, 0, 0, 0, 2],
-                details: ['LLM powered assistant', 'Email support only', 'Email support only', 'Not available', 'Human advisor access']
-              },
-              { 
-                name: 'AI News Analysis', 
-                scores: [5, 2, 2, 0, 3],
-                details: ['Multi-source real-time AI', 'Basic market alerts', 'Basic market alerts', 'Not available', 'Market updates']
-              },
-              { 
-                name: 'Sentiment Analysis', 
-                scores: [4, 1, 2, 0, 1],
-                details: ['Advanced social + news AI', 'Basic market indicators', 'Basic sentiment metrics', 'Not available', 'Basic market sentiment']
-              },
-              { 
-                name: 'Personalization', 
-                scores: [5, 4, 4, 3, 4],
-                details: ['100+ personalization factors', 'Goal-based planning', 'Advanced planning tools', 'Pie-based portfolios', 'Advisor access']
-              },
-              { 
-                name: 'Rebalancing', 
-                scores: [4, 4, 5, 5, 4],
-                details: ['Real-time AI-driven', 'Automatic rebalancing', 'Daily rebalancing', 'Dynamic rebalancing', 'Automatic rebalancing']
-              },
-              { 
-                name: 'Explainability', 
-                scores: [5, 3, 3, 0, 2],
-                details: ['Full AI transparency', 'Partial explanations', 'Partial explanations', 'Not available', 'Via advisor only']
-              }
+              name: 'AI-Powered Explainability', 
+              scores: [5, 2, 2, 0, 3],
+              details: ['Full watsonx transparency - shows AI reasoning step-by-step', 'Basic allocation explanations', 'Limited reasoning provided', 'No explanations - DIY only', 'Human advisor explains (not scalable)']
+            },
+            { 
+              name: 'Real-Time Market Intelligence', 
+              scores: [5, 2, 2, 0, 3],
+              details: ['AI analyzes news + sentiment in real-time with context', 'Basic market commentary emails', 'Periodic market updates', 'No market insights', 'Market updates via advisor']
+            },
+            { 
+              name: 'Deep Personalization', 
+              scores: [5, 4, 4, 3, 4],
+              details: ['ESG values + goals + market preferences + risk profile', 'Goal-based + SRI portfolios', 'Tax optimization + goals', 'Manual pie customization', 'Full advisor customization']
+            },
+            { 
+              name: 'Intelligent Rebalancing', 
+              scores: [5, 4, 4, 2, 4],
+              details: ['AI explains why rebalancing with market context', 'Automatic threshold-based', 'Daily automatic rebalancing', 'Manual rebalancing required', 'Automatic with advisor review']
+            }
             ].map((feature, idx) => (
               <div key={idx} className="relative grid grid-cols-6 gap-4 items-center py-4 px-4 bg-card rounded-lg border border-border z-10">
                 <div className="col-span-1 font-medium text-foreground text-sm">
@@ -542,27 +532,27 @@ export default function HomePage() {
         { 
           name: 'PortfolioAI', 
           recommended: true,
-          scores: { chatbot: 4, news: 5, personalization: 5, sentiment: 4, rebalancing: 4, explainability: 5 },
+          scores: { explainability: 5, intelligence: 5, personalization: 5, rebalancing: 5 },
           icon: <Brain className="w-5 h-5" />
         },
         { 
           name: 'Betterment',
-          scores: { chatbot: 0, news: 2, personalization: 4, sentiment: 1, rebalancing: 4, explainability: 3 },
+          scores: { explainability: 2, intelligence: 2, personalization: 4, rebalancing: 4 },
           icon: <span className="font-bold text-blue-600 dark:text-blue-400">B</span>
         },
         { 
           name: 'Wealthfront',
-          scores: { chatbot: 0, news: 2, personalization: 4, sentiment: 2, rebalancing: 5, explainability: 3 },
+          scores: { explainability: 2, intelligence: 2, personalization: 4, rebalancing: 4 },
           icon: <span className="font-bold text-purple-600 dark:text-purple-400">W</span>
         },
         { 
           name: 'M1 Finance',
-          scores: { chatbot: 0, news: 0, personalization: 3, sentiment: 0, rebalancing: 5, explainability: 0 },
+          scores: { explainability: 0, intelligence: 0, personalization: 3, rebalancing: 2 },
           icon: <span className="font-bold text-red-600 dark:text-red-400">M1</span>
         },
         { 
           name: 'Empower',
-          scores: { chatbot: 2, news: 3, personalization: 4, sentiment: 1, rebalancing: 4, explainability: 2 },
+          scores: { explainability: 3, intelligence: 3, personalization: 4, rebalancing: 4 },
           icon: <span className="font-bold text-green-600 dark:text-green-400">E</span>
         }
       ].map((platform) => (
@@ -580,12 +570,10 @@ export default function HomePage() {
             
             <div className="grid grid-cols-2 gap-3">
               {[
-                { label: '24/7 Chatbot', score: platform.scores.chatbot },
-                { label: 'News Analysis', score: platform.scores.news },
-                { label: 'Sentiment AI', score: platform.scores.sentiment },
+                { label: 'AI Explainability', score: platform.scores.explainability },
+                { label: 'Market Intelligence', score: platform.scores.intelligence },
                 { label: 'Personalization', score: platform.scores.personalization },
-                { label: 'Rebalancing', score: platform.scores.rebalancing },
-                { label: 'Explainability', score: platform.scores.explainability }
+                { label: 'Smart Rebalancing', score: platform.scores.rebalancing }
               ].map((item, idx) => (
                 <div key={idx} className={`flex flex-col gap-1 p-3 rounded-lg ${platform.recommended ? 'bg-primary/10' : 'bg-muted/50'}`}>
                   <span className="text-xs text-muted-foreground font-medium">{item.label}</span>
